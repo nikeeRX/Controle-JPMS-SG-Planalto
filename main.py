@@ -7,6 +7,8 @@ import json
 import urllib.parse
 import os
 import shutil
+import requests
+import re
 
 app = FastAPI()
 app.add_middleware(SessionMiddleware, secret_key="jpms_solucoes_gestao_2026_seguro")
@@ -67,18 +69,19 @@ CSS = f"""
     .input-padrao {{ width: 100%; padding: 12px; margin: 8px 0; border: 1px solid #cbd5e1; border-radius: 5px; font-size: 16px; box-sizing: border-box; background: #f1f5f9; color: #0f172a; }}
     table {{ width: 100%; border-collapse: collapse; margin-top: 15px; }}
     th, td {{ padding: 8px; border-bottom: 1px solid #e2e8f0; text-align: left; vertical-align: middle; }}
-    .logo-central {{ width: 280px; max-width: 100%; height: auto; margin-bottom: 20px; filter: drop-shadow(0px 4px 6px rgba(0,0,0,0.5)); border-radius: 10px; }}
-    .logo-peq {{ width: 180px; max-width: 100%; height: auto; margin-bottom: 10px; filter: drop-shadow(0px 2px 4px rgba(0,0,0,0.5)); border-radius: 8px; }}
-    .grid-dash {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 15px; width: 100%; margin-bottom: 20px; }} 
-    .card-kpi {{ background: white; padding: 15px; border-radius: 10px; color: #0f172a; box-shadow: 0 4px 6px rgba(0,0,0,0.1); border-left: 5px solid #0ea5e9; }} 
-    .card-kpi h3 {{ margin: 0; font-size: 13px; color: #64748b; text-transform: uppercase; }} 
-    .card-kpi p {{ margin: 10px 0 0; font-size: 20px; font-weight: bold; color: #0f172a; }} 
-    .chart-container {{ background: white; padding: 15px; border-radius: 10px; width: 100%; box-shadow: 0 4px 6px rgba(0,0,0,0.1); margin-bottom:20px; }} 
-    .item-linha {{ display: flex; justify-content: space-between; font-size: 14px; margin-bottom: 8px; border-bottom: 1px dashed #cbd5e1; padding-bottom: 5px; align-items: center; color: #334155; }}
+    .logo-peq {{ width: 220px; max-width: 100%; height: auto; margin-bottom: 15px; filter: drop-shadow(0px 4px 6px rgba(0,0,0,0.3)); border-radius: 8px; }}
+    .grid-dash {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 15px; width: 100%; margin-bottom: 20px; }} 
+    .card-kpi {{ background: white; padding: 20px; border-radius: 10px; color: #0f172a; box-shadow: 0 4px 6px rgba(0,0,0,0.1); border-left: 5px solid #10b981; }} 
+    .card-kpi h3 {{ margin: 0; font-size: 14px; color: #64748b; text-transform: uppercase; }} 
+    .card-kpi p {{ margin: 10px 0 0; font-size: 28px; font-weight: bold; color: #0f172a; }} 
+    .chart-container {{ background: white; padding: 25px; border-radius: 10px; width: 100%; box-shadow: 0 4px 6px rgba(0,0,0,0.1); margin-bottom:20px; text-align: left; }} 
+    .item-linha {{ display: flex; justify-content: space-between; font-size: 16px; margin-bottom: 10px; border-bottom: 1px dashed #cbd5e1; padding-bottom: 5px; align-items: center; color: #334155; }}
+    .filtro-box {{ display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 20px; background: #1e293b; padding: 15px; border-radius: 8px; border: 1px solid #334155; width: 100%; text-align: left; }}
+    .filtro-box label {{ font-size: 12px; color: #94a3b8; font-weight: bold; }}
 </style>
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 """
-IMG_LOGO_PEQ = f"<div style='display:flex; justify-content:center; margin-bottom:15px;'><img src='{IMG_URL}' class='logo-peq' onerror=\"this.style.display='none'\"></div>"
+IMG_LOGO_PEQ = f"<div style='display:flex; justify-content:center; margin-bottom:15px;'><img src='{IMG_URL}' class='logo-peq'></div>"
 
 @app.get("/logo.png")
 async def exibir_logo(): 
@@ -112,7 +115,7 @@ async def central(request: Request):
     botoes = """
     <a href='/pdv' class='btn-acao' style='background:#10b981; font-size: 20px; padding: 25px;'>🛒 ABRIR CAIXA (PDV)</a>
     <a href='/estoque' class='btn-acao' style='background:#1e293b; font-size: 20px; padding: 25px;'>📦 GESTÃO DE ESTOQUE</a>
-    <a href='/dashboard' class='btn-acao' style='background:#0ea5e9;'>📊 RELATÓRIOS E FINANCEIRO</a>
+    <a href='/dashboard' class='btn-acao' style='background:#0ea5e9;'>📊 RELATÓRIOS E FECHAMENTO</a>
     <a href='/baixar_conector' class='btn-acao' style='background:#f59e0b; color:black;'>🖨️ BAIXAR CONECTOR DE IMPRESSORA</a>
     """
     if role == "admin":
@@ -125,12 +128,11 @@ async def central(request: Request):
 
 
 # ==========================================
-# MÓDULO 1: CONFIGURAÇÕES FISCAIS (UPLOAD DO CERTIFICADO A1 E TOKENS)
+# MÓDULO 1: CONFIGURAÇÕES FISCAIS
 # ==========================================
 @app.get("/config_fiscal", response_class=HTMLResponse)
 async def tela_config_fiscal(request: Request):
     if request.session.get("role") != "admin": return RedirectResponse(url="/central")
-    
     with engine.connect() as conn:
         cfg = conn.execute(text("SELECT token_focus, ambiente, nome_arquivo_cert FROM configuracoes_nfe LIMIT 1")).fetchone()
         
@@ -141,16 +143,14 @@ async def tela_config_fiscal(request: Request):
     return f"""<html><head>{CSS}</head><body><div class='container-center'><div class='card-center' style='max-width:600px;'>
         {IMG_LOGO_PEQ}
         <h2>⚙️ Configurações de Emissão (Focus NFe)</h2>
-        <p style='color:#64748b; font-size:14px; margin-bottom:20px;'>Configure os parâmetros fiscais e suba seu certificado digital A1 para habilitar as notas fiscais.</p>
-        
         <form action='/salvar_config_fiscal' method='post' enctype='multipart/form-data' style='text-align:left;'>
-            <label style='font-weight:bold; font-size:14px;'>Token de Produção/Homologação Focus NFe:</label>
-            <input class='input-padrao' name='token_focus' value='{token_atual}' placeholder='Cole seu Token da Focus NFe aqui' required>
+            <label style='font-weight:bold; font-size:14px;'>Token Focus NFe:</label>
+            <input class='input-padrao' name='token_focus' value='{token_atual}' placeholder='Token fornecido pela Focus NFe' required>
             
-            <label style='font-weight:bold; font-size:14px;'>Ambiente do Sistema:</label>
+            <label style='font-weight:bold; font-size:14px;'>Ambiente:</label>
             <select class='input-padrao' name='ambiente'>
-                <option value='HOMOLOGACAO' {'selected' if amb_atual == 'HOMOLOGACAO' else ''}>🧪 HOMOLOGAÇÃO (Testes)</option>
-                <option value='PRODUCAO' {'selected' if amb_atual == 'PRODUCAO' else ''}>🚀 PRODUÇÃO (Vendas Reais)</option>
+                <option value='HOMOLOGACAO' {'selected' if amb_atual == 'HOMOLOGACAO' else ''}>🧪 HOMOLOGAÇÃO (Testes Livres)</option>
+                <option value='PRODUCAO' {'selected' if amb_atual == 'PRODUCAO' else ''}>🚀 PRODUÇÃO (Vendas Reais - SEFAZ)</option>
             </select>
             
             <div style='background:#f1f5f9; padding:15px; border-radius:8px; border:1px solid #cbd5e1; margin:15px 0;'>
@@ -158,10 +158,9 @@ async def tela_config_fiscal(request: Request):
                 <p style='font-size:12px; color:#64748b; margin-top:-5px;'>Arquivo Atual: <b>{cert_atual}</b></p>
                 <input type='file' name='arquivo_certificado' accept='.pfx,.p12' style='margin-bottom:10px;'><br>
                 <label style='font-size:13px; font-weight:bold;'>Senha do Certificado:</label>
-                <input type='password' class='input-padrao' name='senha_certificado' placeholder='Senha do arquivo .pfx' style='padding:8px; font-size:14px;'>
+                <input type='password' class='input-padrao' name='senha_certificado' placeholder='Senha do certificado' style='padding:8px; font-size:14px;'>
             </div>
-            
-            <button class='btn-acao' style='background:#8b5cf6; font-size:16px; margin-top:10px;'>💾 SALVAR CREDENCIAIS FISCAIS</button>
+            <button class='btn-acao' style='background:#8b5cf6; font-size:16px;'>💾 SALVAR CREDENCIAIS FISCAIS</button>
         </form>
         <br><a href='/central' style='color:gray'>Voltar ao Painel</a>
     </div></div></body></html>"""
@@ -169,32 +168,20 @@ async def tela_config_fiscal(request: Request):
 @app.post("/salvar_config_fiscal")
 async def salvar_config_fiscal(request: Request, token_focus: str = Form(...), ambiente: str = Form(...), senha_certificado: str = Form(None), arquivo_certificado: UploadFile = File(None)):
     if request.session.get("role") != "admin": return RedirectResponse(url="/central")
-    
     nome_original_cert = None
     if arquivo_certificado and arquivo_certificado.filename:
         nome_original_cert = arquivo_certificado.filename
         file_path = os.path.join(UPLOAD_DIR, nome_original_cert)
         with open(file_path, "wb") as buffer:
             shutil.copyfileobj(arquivo_certificado.file, buffer)
-            
     try:
         with engine.begin() as conn:
             if nome_original_cert:
-                conn.execute(text("""
-                    UPDATE configuracoes_nfe 
-                    SET token_focus = :tk, ambiente = :amb, senha_certificado = :senha, nome_arquivo_cert = :nome 
-                    WHERE id = (SELECT id FROM configuracoes_nfe LIMIT 1)
-                """), {"tk": token_focus.strip(), "amb": ambiente, "senha": senha_certificado, "nome": nome_original_cert})
+                conn.execute(text("UPDATE configuracoes_nfe SET token_focus = :tk, ambiente = :amb, senha_certificado = :senha, nome_arquivo_cert = :nome WHERE id = (SELECT id FROM configuracoes_nfe LIMIT 1)"), {"tk": token_focus.strip(), "amb": ambiente, "senha": senha_certificado, "nome": nome_original_cert})
             else:
-                conn.execute(text("""
-                    UPDATE configuracoes_nfe 
-                    SET token_focus = :tk, ambiente = :amb 
-                    WHERE id = (SELECT id FROM configuracoes_nfe LIMIT 1)
-                """), {"tk": token_focus.strip(), "amb": ambiente})
-    except Exception as e:
-        print(f"Erro ao salvar configurações fiscais: {e}")
-        
-    return HTMLResponse("<script>alert('Configurações Fiscais atualizadas com sucesso!'); window.location.href='/config_fiscal';</script>")
+                conn.execute(text("UPDATE configuracoes_nfe SET token_focus = :tk, ambiente = :amb WHERE id = (SELECT id FROM configuracoes_nfe LIMIT 1)"), {"tk": token_focus.strip(), "amb": ambiente})
+    except Exception: pass
+    return HTMLResponse("<script>alert('Configurações Fiscais atualizadas!'); window.location.href='/config_fiscal';</script>")
 
 
 # ==========================================
@@ -278,7 +265,10 @@ async def pdv_caixa(request: Request):
     <body style='background:#e2e8f0;'>
         <div style='display:flex; height:100vh; width:100%;'>
             <div style='flex:2; padding:20px; display:flex; flex-direction:column; border-right:2px solid #cbd5e1; background:white;'>
-                <h2 style='color:#0ea5e9; margin-top:0;'>🛒 Caixa Livre (PDV)</h2>
+                <div style='display:flex; align-items:center; gap:20px; margin-bottom:10px;'>
+                     {IMG_LOGO_PEQ}
+                     <h2 style='color:#0ea5e9; margin:0;'>🛒 Caixa Livre (PDV)</h2>
+                </div>
                 <div id='lista-itens' style='flex:1; overflow-y:auto; background:#f8fafc; border:1px solid #cbd5e1; border-radius:8px; padding:10px;'>
                     <div style='color:#94a3b8; text-align:center; margin-top:20px; font-size:18px;'>Aguardando produtos... Bipe o código de barras.</div>
                 </div>
@@ -286,7 +276,7 @@ async def pdv_caixa(request: Request):
             
             <div style='flex:1; padding:20px; display:flex; flex-direction:column; justify-content:space-between; background:#0f172a; min-width:350px;'>
                 <div>
-                    {IMG_LOGO_PEQ}
+                    <h3 style='color:white; margin-top:0;'>Leitor de Código de Barras</h3>
                     <input type='text' id='leitor' onkeypress='processarBipe(event)' style='width:100%; padding:20px; font-size:20px; text-align:center; border:3px solid #10b981; border-radius:8px; background:white; color:black; outline:none;' placeholder='BIPE O CÓDIGO AQUI' autocomplete='off'>
                 </div>
                 
@@ -295,10 +285,10 @@ async def pdv_caixa(request: Request):
                     <div id='valor-total' style='color:#10b981; font-size:45px; font-weight:bold; margin-bottom:20px;'>R$ 0.00</div>
                     
                     <select id='forma-pag' class='input-padrao' style='font-size:18px; padding:15px; margin-bottom:15px; font-weight:bold;'>
-                        <option value='DINHEIRO'>💵 DINHEIRO</option>
-                        <option value='PIX'>💠 PIX</option>
-                        <option value='C. CREDITO'>💳 CARTÃO CRÉDITO</option>
-                        <option value='C. DEBITO'>💳 CARTÃO DÉBITO</option>
+                        <option value='01'>💵 DINHEIRO</option>
+                        <option value='17'>💠 PIX</option>
+                        <option value='03'>💳 CARTÃO CRÉDITO</option>
+                        <option value='04'>💳 CARTÃO DÉBITO</option>
                     </select>
 
                     <div style='background:#0f172a; padding:15px; border-radius:8px; margin-bottom:15px; border:1px solid #334155;'>
@@ -319,20 +309,15 @@ async def pdv_caixa(request: Request):
         </div>
     </body></html>"""
 
-@app.get("/api/bipar/{codigo}")
-async def bipar_produto(codigo: str):
-    with engine.connect() as conn:
-        prod = conn.execute(text("SELECT id, nome, preco, estoque FROM produtos WHERE codigo_barras = :c OR id::text = :c OR nome ILIKE :c LIMIT 1"), {"c": codigo.strip()}).fetchone()
-        if prod:
-            if prod.estoque <= 0: return {"status": "esgotado", "nome": prod.nome}
-            return {"status": "ok", "id": prod.id, "nome": prod.nome, "preco": float(prod.preco)}
-        return {"status": "erro", "msg": "Produto não encontrado"}
-
 @app.post("/finalizar_pdv")
 async def finalizar_pdv(request: Request):
     f = await request.form()
     itens = json.loads(f.get("itens", "[]"))
-    pagamento = f.get("pagamento")
+    cod_pagamento = f.get("pagamento")
+    
+    nomes_pag = {"01": "DINHEIRO", "17": "PIX", "03": "C. CREDITO", "04": "C. DEBITO"}
+    nome_pagamento = nomes_pag.get(cod_pagamento, "OUTROS")
+    
     nfe_solicitada = f.get("nfe") == "true"
     cpf_nota = f.get("cpf_nota", "").strip()
     usuario = request.session.get("user", "Caixa")
@@ -341,7 +326,7 @@ async def finalizar_pdv(request: Request):
     
     try:
         with engine.begin() as conn:
-            conn.execute(text("INSERT INTO comandas (numero_comanda, total_conta, status, forma_pagamento, nfe_solicitada, cpf_nota) VALUES (:c, :t, 'FECHADA', :p, :nfe, :cpf)"), {"c": cupom_id, "t": total, "p": pagamento, "nfe": nfe_solicitada, "cpf": cpf_nota})
+            conn.execute(text("INSERT INTO comandas (numero_comanda, total_conta, status, forma_pagamento, nfe_solicitada, cpf_nota) VALUES (:c, :t, 'FECHADA', :p, :nfe, :cpf)"), {"c": cupom_id, "t": total, "p": nome_pagamento, "nfe": nfe_solicitada, "cpf": cpf_nota})
             
             txt = f"--------------------------------\n   JPMS SOLUCOES DE GESTAO\nCUPOM: {cupom_id}\nCAIXA: {usuario.upper()}\nDATA: {datetime.now().strftime('%d/%m/%Y %H:%M')}\n--------------------------------\n"
             for item in itens:
@@ -349,10 +334,46 @@ async def finalizar_pdv(request: Request):
                 conn.execute(text("UPDATE produtos SET estoque = GREATEST(estoque - 1, 0) WHERE id = :id"), {"id": item['id']})
                 txt += f"1x {item['nome'][:20]:<20} R$ {item['preco']:.2f}\n"
                 
-            txt += f"--------------------------------\nTOTAL: R$ {total:.2f}\nPAGTO: {pagamento}\n--------------------------------\n"
+            txt += f"--------------------------------\nTOTAL: R$ {total:.2f}\nPAGTO: {nome_pagamento}\n--------------------------------\n"
+            
             if nfe_solicitada:
                 txt += "EMISSAO DE NFC-e SOLICITADA\n"
                 if cpf_nota: txt += f"CPF/CNPJ: {cpf_nota}\n"
+                
+                cfg = conn.execute(text("SELECT token_focus, ambiente FROM configuracoes_nfe LIMIT 1")).fetchone()
+                if cfg and cfg.token_focus:
+                    url_api = "https://api.focusnfe.com.br/v2/nfce"
+                    payload = {
+                        "natureza_operacao": "VENDA",
+                        "presenca_comprador": "1",
+                        "itens": [
+                            {
+                                "numero_item": str(idx+1), 
+                                "codigo_produto": str(item['id']), 
+                                "descricao": item['nome'], 
+                                "cfop": "5102", 
+                                "unidade_comercial": "UN", 
+                                "quantidade_comercial": "1", 
+                                "valor_unitario_comercial": str(item['preco']), 
+                                "valor_bruto": str(item['preco']), 
+                                "icms_origem": "0", 
+                                "icms_situacao_tributaria": "102"
+                            } for idx, item in enumerate(itens)
+                        ],
+                        "pagamentos": [{"forma_pagamento": cod_pagamento, "valor_pagamento": str(total)}]
+                    }
+                    if cpf_nota: payload["cpf_cnpj_destinatario"] = re.sub(r'[^0-9]', '', cpf_nota)
+                    try:
+                        resp = requests.post(url_api, json=payload, auth=(cfg.token_focus, ""))
+                        if resp.status_code in [200, 202]:
+                            dados_nfe = resp.json()
+                            txt += f"\n✅ COMUNICACAO SEFAZ OK!\nAmbiente: {cfg.ambiente}\nStatus: {dados_nfe.get('status', 'OK')}\n"
+                        elif resp.status_code == 401:
+                            txt += "\n❌ ERRO API: Token Invalido.\n"
+                        else:
+                            txt += f"\n⚠️ RETORNO SEFAZ:\n{str(resp.json())[:150]}...\n"
+                    except Exception as e: txt += f"\n⚠️ FALHA DE REDE: {e}\n"
+                else: txt += "\n⚠️ ERRO: Token nao configurado.\n"
                 txt += "--------------------------------\n"
 
             conn.execute(text("INSERT INTO fila_impressao (conteudo) VALUES (:txt)"), {"txt": txt})
@@ -361,7 +382,7 @@ async def finalizar_pdv(request: Request):
 
 
 # ==========================================
-# MÓDULO 3: ESTOQUE (COM CÓDIGO DE BARRAS)
+# MÓDULO 3: ESTOQUE (CÓDIGO DE BARRAS)
 # ==========================================
 @app.get("/estoque", response_class=HTMLResponse)
 async def tela_estoque(request: Request):
@@ -387,7 +408,7 @@ async def tela_estoque(request: Request):
             <button class='btn-acao' style='background:#0ea5e9; width:100%; font-size:18px;'>SALVAR NO SISTEMA</button>
         </form>
     </div>"""
-    return f"<html><head>{CSS}</head><body><div class='container-center'><div class='card-center' style='max-width:800px;'><h2>📦 Gestão de Estoque</h2>{add_form}<div style='max-height:400px; overflow-y:auto; border:1px solid #cbd5e1;'><table><tr><th style='color:#0f172a'>Cód. Barras</th><th style='color:#0f172a'>Produto</th><th style='color:#0f172a'>Estoque</th><th style='color:#0f172a'>Ações</th></tr>{linhas}</table></div><br><a href='/central' style='color:gray'>Voltar</a></div></div></body></html>"
+    return f"<html><head>{CSS}</head><body><div class='container-center'><div class='card-center' style='max-width:800px;'>{IMG_LOGO_PEQ}<h2>📦 Gestão de Estoque</h2>{add_form}<div style='max-height:400px; overflow-y:auto; border:1px solid #cbd5e1;'><table><tr><th style='color:#0f172a'>Cód. Barras</th><th style='color:#0f172a'>Produto</th><th style='color:#0f172a'>Estoque</th><th style='color:#0f172a'>Ações</th></tr>{linhas}</table></div><br><a href='/central' style='color:gray'>Voltar</a></div></div></body></html>"
 
 @app.post("/novo_produto")
 async def novo_produto(request: Request):
@@ -396,16 +417,14 @@ async def novo_produto(request: Request):
     try:
         with engine.begin() as conn: 
             conn.execute(text("INSERT INTO produtos (codigo_barras, nome, categoria, preco, estoque) VALUES (:cb, :n, :c, :p, :q) ON CONFLICT (codigo_barras) DO UPDATE SET estoque = produtos.estoque + :q"), {"cb": cb, "n": f.get("nome"), "c": f.get("cat"), "p": float(f.get("preco").replace(",", ".")), "q": int(f.get("qtd"))})
-            conn.execute(text("INSERT INTO historico_estoque (produto_nome, qtd_adicionada) VALUES (:n, :q)"), {"n": f.get("nome"), "q": int(f.get("qtd"))})
-    except Exception as e: print(e)
+    except Exception: pass
     return RedirectResponse(url="/estoque", status_code=303)
 
 @app.post("/att_estoque")
 async def att_estoque(request: Request):
     f = await request.form()
     try:
-        with engine.begin() as conn: 
-            conn.execute(text("UPDATE produtos SET estoque = COALESCE(estoque, 0) + :q WHERE id = :id"), {"id": f.get("id"), "q": int(f.get("q", "0"))})
+        with engine.begin() as conn: conn.execute(text("UPDATE produtos SET estoque = COALESCE(estoque, 0) + :q WHERE id = :id"), {"id": f.get("id"), "q": int(f.get("q", "0"))})
     except: pass
     return RedirectResponse(url="/estoque", status_code=303)
 
@@ -419,25 +438,94 @@ async def excluir_produto(request: Request):
 
 
 # ==========================================
-# MÓDULO 4: RELATÓRIOS SIMPLIFICADOS
+# MÓDULO 4: RELATÓRIOS E FECHAMENTO COM FILTROS AVANÇADOS
 # ==========================================
 @app.get("/dashboard", response_class=HTMLResponse)
-async def dashboard(request: Request):
+async def dashboard(request: Request, inicio: str = "", fim: str = "", tipo_venda: str = "TODOS"):
     if request.session.get("role") not in ["admin", "gerente"]: return RedirectResponse(url="/central")
-    hoje = date.today().strftime("%Y-%m-%d")
     
+    # Se não informar o período, joga o dia atual por padrão
+    hoje_str = date.today().strftime("%Y-%m-%d")
+    dt_inicio = inicio if inicio else hoje_str
+    dt_fim = fim if fim else hoje_str
+
+    # Construção da query SQL dinâmica
+    where_clause = "status = 'FECHADA' AND CAST(data_fechamento AS DATE) BETWEEN CAST(:inicio AS DATE) AND CAST(:fim AS DATE)"
+    params = {"inicio": dt_inicio, "fim": dt_fim}
+    
+    if tipo_venda and tipo_venda != "TODOS":
+        where_clause += " AND forma_pagamento = :tipo"
+        params["tipo"] = tipo_venda
+
     with engine.connect() as conn:
-        kpi = conn.execute(text(f"SELECT SUM(total_conta) as total FROM comandas WHERE status = 'FECHADA' AND CAST(data_fechamento AS DATE) = CAST('{hoje}' AS DATE)")).fetchone()
-        faturamento_hoje = float(kpi.total or 0)
+        kpi = conn.execute(text(f"SELECT SUM(total_conta) as total FROM comandas WHERE {where_clause}"), params).fetchone()
+        faturamento_filtrado = float(kpi.total or 0)
         
-        pag_q = conn.execute(text(f"SELECT forma_pagamento, SUM(total_conta) as total FROM comandas WHERE status = 'FECHADA' AND CAST(data_fechamento AS DATE) = CAST('{hoje}' AS DATE) GROUP BY forma_pagamento")).fetchall()
+        pag_q = conn.execute(text(f"SELECT forma_pagamento, SUM(total_conta) as total FROM comandas WHERE {where_clause} GROUP BY forma_pagamento"), params).fetchall()
         totais_pag = {"DINHEIRO": 0.0, "PIX": 0.0, "C. CREDITO": 0.0, "C. DEBITO": 0.0}
-        for p in pag_q: totais_pag[p.forma_pagamento] = float(p.total or 0)
+        for p in pag_q: 
+            if p.forma_pagamento in totais_pag: totais_pag[p.forma_pagamento] = float(p.total or 0)
         
-        top_db = conn.execute(text(f"SELECT item_nome, COUNT(*) as qtd FROM vendas_itens WHERE status = 'FECHADA' AND CAST(data_venda AS DATE) = CAST('{hoje}' AS DATE) GROUP BY item_nome ORDER BY qtd DESC LIMIT 5")).fetchall()
+        top_db = conn.execute(text(f"SELECT item_nome, COUNT(*) as qtd FROM vendas_itens WHERE status = 'FECHADA' AND comanda_num IN (SELECT numero_comanda FROM comandas WHERE {where_clause}) GROUP BY item_nome ORDER BY qtd DESC LIMIT 5"), params).fetchall()
         html_top = "".join([f"<div class='item-linha'><span>{i+1}º {r.item_nome}</span><b style='color:#0ea5e9;'>{r.qtd} un</b></div>" for i, r in enumerate(top_db)])
 
-    return f"<html><head>{CSS}</head><body><div class='container-center'><div class='card-center'><h2>📊 Resumo do Dia ({date.today().strftime('%d/%m/%Y')})</h2><div class='grid-dash'><div class='card-kpi'><h3>Faturamento Hoje</h3><p style='color:#10b981; font-size:28px;'>R$ {faturamento_hoje:.2f}</p></div></div><div style='display:flex; justify-content:space-between; flex-wrap:wrap; gap:10px; margin-bottom:20px;'><div style='background:#f8fafc; padding:15px; border-radius:8px; border-left:4px solid #10b981; flex:1;'><b>💵 Dinheiro:</b><br><span style='font-size:20px; color:#10b981;'>R$ {totais_pag['DINHEIRO']:.2f}</span></div><div style='background:#f8fafc; padding:15px; border-radius:8px; border-left:4px solid #0ea5e9; flex:1;'><b>💠 PIX:</b><br><span style='font-size:20px; color:#0ea5e9;'>R$ {totais_pag['PIX']:.2f}</span></div><div style='background:#f8fafc; padding:15px; border-radius:8px; border-left:4px solid #f59e0b; flex:1;'><b>💳 Cartões:</b><br><span style='font-size:20px; color:#f59e0b;'>R$ {(totais_pag['C. CREDITO'] + totais_pag['C. DEBITO']):.2f}</span></div></div><div class='chart-container'><h3 style='color:#0f172a; margin-top:0; border-bottom:2px solid #e2e8f0; padding-bottom:5px;'>🏆 Top 5 Mais Vendidos Hoje</h3>{html_top if html_top else '<p style=\"color:#64748b;\">Nenhuma venda hoje.</p>'}</div><br><a href='/central' class='btn-acao' style='background:#334155;'>Voltar</a></div></div></body></html>"
+    opcoes_select = f"""
+    <option value='TODOS' {'selected' if tipo_venda == 'TODOS' else ''}>⚙️ TODOS OS TIPOS</option>
+    <option value='DINHEIRO' {'selected' if tipo_venda == 'DINHEIRO' else ''}>💵 DINHEIRO</option>
+    <option value='PIX' {'selected' if tipo_venda == 'PIX' else ''}>💠 PIX</option>
+    <option value='C. CREDITO' {'selected' if tipo_venda == 'C. CREDITO' else ''}>💳 CARTÃO CRÉDITO</option>
+    <option value='C. DEBITO' {'selected' if tipo_venda == 'C. DEBITO' else ''}>💳 CARTÃO DÉBITO</option>
+    """
+
+    return f"""<html><head>{CSS}</head><body><div class='container-center'><div class='card-center' style='max-width:800px;'>
+        {IMG_LOGO_PEQ}
+        <h2>📊 Relatório de Vendas e Fechamento</h2>
+        
+        <form method='get' class='filtro-box'>
+            <div style='flex:1; min-width:140px;'>
+                <label>Data Inicial:</label><br>
+                <input type='date' name='inicio' value='{dt_inicio}' class='input-padrao' style='margin:5px 0 0 0; padding:8px;'>
+            </div>
+            <div style='flex:1; min-width:140px;'>
+                <label>Data Final:</label><br>
+                <input type='date' name='fim' value='{dt_fim}' class='input-padrao' style='margin:5px 0 0 0; padding:8px;'>
+            </div>
+            <div style='flex:1; min-width:160px;'>
+                <label>Tipo de Venda:</label><br>
+                <select name='tipo_venda' class='input-padrao' style='margin:5px 0 0 0; padding:8px; font-weight:bold;'>
+                    {opcoes_select}
+                </select>
+            </div>
+            <div style='display:flex; align-items:flex-end; min-width:100px;'>
+                <button class='btn-acao' style='background:#10b981; margin:0; padding:10px; height:41px;'>FILTRAR</button>
+            </div>
+        </form>
+
+        <div class='grid-dash'>
+            <div class='card-kpi' style='border-left: 6px solid #10b981;'>
+                <h3>Faturamento do Período</h3>
+                <p style='color:#10b981; font-size:32px;'>R$ {faturamento_filtrado:.2f}</p>
+            </div>
+        </div>
+
+        <div style='display:flex; justify-content:space-between; flex-wrap:wrap; gap:10px; margin-bottom:20px;'>
+            <div style='background:#f8fafc; padding:15px; border-radius:8px; border-left:4px solid #10b981; flex:1; min-width:130px;'>
+                <b>💵 Dinheiro:</b><br><span style='font-size:18px; color:#10b981; font-weight:bold;'>R$ {totais_pag['DINHEIRO']:.2f}</span>
+            </div>
+            <div style='background:#f8fafc; padding:15px; border-radius:8px; border-left:4px solid #0ea5e9; flex:1; min-width:130px;'>
+                <b>💠 PIX:</b><br><span style='font-size:18px; color:#0ea5e9; font-weight:bold;'>R$ {totais_pag['PIX']:.2f}</span>
+            </div>
+            <div style='background:#f8fafc; padding:15px; border-radius:8px; border-left:4px solid #f59e0b; flex:1; min-width:130px;'>
+                <b>💳 Cartões:</b><br><span style='font-size:18px; color:#f59e0b; font-weight:bold;'>R$ {(totais_pag['C. CREDITO'] + totais_pag['C. DEBITO']):.2f}</span>
+            </div>
+        </div>
+
+        <div class='chart-container'>
+            <h3 style='color:#0f172a; margin-top:0; border-bottom:2px solid #e2e8f0; padding-bottom:5px;'>🏆 Produtos Mais Vendidos no Filtro</h3>
+            {html_top if html_top else '<p style=\"color:#64748b;\">Nenhuma venda encontrada para este filtro.</p>'}
+        </div>
+        <br><a href='/central' class='btn-acao' style='background:#334155; width:150px; margin:auto;'>Voltar</a>
+    </div></div></body></html>"""
 
 
 # ==========================================
@@ -453,7 +541,7 @@ async def tela_usuarios(request: Request):
             acoes = f"<form action='/excluir_usuario' method='post' style='margin:0;' onsubmit='return confirm(\"Excluir?\");'><input type='hidden' name='id' value='{r.id}'><button class='btn-acao' style='background:#ef4444; padding:8px;'>🗑️</button></form>" if r.username != "admin" else ""
             linhas += f"<tr><td style='color:#0f172a; font-weight:bold;'>{r.username.upper()}</td><td style='color:#0ea5e9;'>{r.role.upper()}</td><td>{acoes}</td></tr>"
     add_form = f"<div style='background:#f1f5f9; padding:20px; border-radius:10px; margin-bottom:20px; text-align:left; border:1px solid #cbd5e1;'><h3 style='margin-top:0; color:#8b5cf6;'>➕ NOVO USUÁRIO</h3><form action='/novo_usuario' method='post' style='display:flex; flex-wrap:wrap; gap:10px;'><input name='u' placeholder='Login' class='input-padrao' style='flex:1;' required><input name='p' type='password' placeholder='Senha' class='input-padrao' style='flex:1;' required><select name='r' class='input-padrao' style='flex:1;'><option value='gerente'>GERENTE</option><option value='caixa'>CAIXA</option></select><button class='btn-acao' style='background:#8b5cf6; width:100%;'>CRIAR ACESSO</button></form></div>"
-    return f"<html><head>{CSS}</head><body><div class='container-center'><div class='card-center'><h2>Usuários</h2>{add_form}<div style='max-height:400px; overflow-y:auto; border:1px solid #cbd5e1;'><table><tr><th style='color:#0f172a'>Login</th><th style='color:#0f172a'>Cargo</th><th style='color:#0f172a'>Ação</th></tr>{linhas}</table></div><br><a href='/central' style='color:gray'>Voltar</a></div></div></body></html>"
+    return f"<html><head>{CSS}</head><body><div class='container-center'><div class='card-center'>{IMG_LOGO_PEQ}<h2>Usuários</h2>{add_form}<div style='max-height:400px; overflow-y:auto; border:1px solid #cbd5e1;'><table><tr><th style='color:#0f172a'>Login</th><th style='color:#0f172a'>Cargo</th><th style='color:#0f172a'>Ação</th></tr>{linhas}</table></div><br><a href='/central' style='color:gray'>Voltar</a></div></div></body></html>"
 
 @app.post("/novo_usuario")
 async def novo_usuario(request: Request):
