@@ -10,6 +10,7 @@ import os
 app = FastAPI()
 app.add_middleware(SessionMiddleware, secret_key="jpms_solucoes_gestao_2026_seguro")
 
+# Conexão com o Banco de Dados do Railway
 DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://postgres:GNlZnHiuKAcFnpgXhwILfigqKCNkaHqx@interchange.proxy.rlwy.net:44559/railway")
 engine = create_engine(DATABASE_URL, pool_pre_ping=True)
 
@@ -24,16 +25,18 @@ with engine.begin() as conn:
         CREATE TABLE IF NOT EXISTS historico_estoque (id SERIAL PRIMARY KEY, produto_nome TEXT, qtd_adicionada INT, data_entrada DATE DEFAULT CURRENT_DATE);
     """))
 
-# Migração segura para adicionar código de barras caso a tabela já exista
+# Migração segura para adicionar as colunas novas (Código de Barras e Nota Fiscal) sem quebrar o banco atual
 MIGRACOES = [
-    "ALTER TABLE produtos ADD COLUMN IF NOT EXISTS codigo_barras TEXT UNIQUE;"
+    "ALTER TABLE produtos ADD COLUMN IF NOT EXISTS codigo_barras TEXT UNIQUE;",
+    "ALTER TABLE comandas ADD COLUMN IF NOT EXISTS nfe_solicitada BOOLEAN DEFAULT FALSE;",
+    "ALTER TABLE comandas ADD COLUMN IF NOT EXISTS cpf_nota TEXT;"
 ]
 for mig in MIGRACOES:
     try:
         with engine.begin() as conn: conn.execute(text(mig))
     except Exception: pass
 
-# Admin Padrão
+# Cria o Admin Padrão
 try:
     with engine.begin() as conn:
         conn.execute(text("INSERT INTO usuarios (username, password, role) VALUES ('admin', '1234', 'admin') ON CONFLICT (username) DO NOTHING"))
@@ -43,6 +46,7 @@ IMG_URL = "/logo.png"
 CSS = f"""
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <meta name="apple-mobile-web-app-capable" content="yes">
+<title>JPMS Soluções de Gestão</title>
 <style>
     * {{ box-sizing: border-box; font-family: 'Segoe UI', Tahoma, sans-serif; }}
     body {{ margin: 0; background: #0f172a; color: white; height: 100vh; display: flex; flex-direction: column; overflow: hidden; }}
@@ -55,7 +59,6 @@ CSS = f"""
     th, td {{ padding: 8px; border-bottom: 1px solid #e2e8f0; text-align: left; vertical-align: middle; }}
     .logo-central {{ width: 280px; max-width: 100%; height: auto; margin-bottom: 20px; filter: drop-shadow(0px 4px 6px rgba(0,0,0,0.5)); border-radius: 10px; }}
     .logo-peq {{ width: 180px; max-width: 100%; height: auto; margin-bottom: 10px; filter: drop-shadow(0px 2px 4px rgba(0,0,0,0.5)); border-radius: 8px; }}
-    /* Grid Dash */
     .grid-dash {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 15px; width: 100%; margin-bottom: 20px; }} 
     .card-kpi {{ background: white; padding: 15px; border-radius: 10px; color: #0f172a; box-shadow: 0 4px 6px rgba(0,0,0,0.1); border-left: 5px solid #0ea5e9; }} 
     .card-kpi h3 {{ margin: 0; font-size: 13px; color: #64748b; text-transform: uppercase; }} 
@@ -74,7 +77,7 @@ async def exibir_logo():
 
 @app.get("/", response_class=HTMLResponse)
 async def login_page(): 
-    return f"<html><head>{CSS}</head><body><div class='container-center'><div class='card-center'>{IMG_LOGO_PEQ}<h2>Acesso ao Sistema JPMS</h2><form action='/login' method='post'><input class='input-padrao' name='user' placeholder='Usuário' required><input class='input-padrao' name='pw' type='password' placeholder='Senha' required><button class='btn-acao' style='padding:15px; font-size:18px;'>ENTRAR</button></form></div></div></body></html>"
+    return f"<html><head>{CSS}</head><body><div class='container-center'><div class='card-center'>{IMG_LOGO_PEQ}<h2>JPMS Soluções de Gestão</h2><form action='/login' method='post'><input class='input-padrao' name='user' placeholder='Usuário' required><input class='input-padrao' name='pw' type='password' placeholder='Senha' required><button class='btn-acao' style='padding:15px; font-size:18px;'>ENTRAR</button></form></div></div></body></html>"
 
 @app.post("/login")
 async def login(request: Request):
@@ -105,10 +108,11 @@ async def central(request: Request):
     if role == "admin":
         botoes += "<a href='/usuarios' class='btn-acao' style='background:#475569'>👥 GERENCIAR USUÁRIOS</a>"
         
-    return f"<html><head>{CSS}</head><body><div class='container-center'><div class='card-center'>{IMG_LOGO_PEQ}<p>Logado como: <b>{user.upper()}</b></p><div style='display:flex; flex-direction:column; gap:15px; margin-top:20px;'>{botoes}</div><br><a href='/logout' style='color:gray'>Sair</a></div></div></body></html>"
+    return f"<html><head>{CSS}</head><body><div class='container-center'><div class='card-center'>{IMG_LOGO_PEQ}<p>Operador: <b>{user.upper()}</b></p><div style='display:flex; flex-direction:column; gap:15px; margin-top:20px;'>{botoes}</div><br><a href='/logout' style='color:gray'>Sair</a></div></div></body></html>"
+
 
 # ==========================================
-# MÓDULO 1: CAIXA EXPRESSO (PDV)
+# MÓDULO 1: CAIXA EXPRESSO (PDV) - ATUALIZADO COM NFE
 # ==========================================
 @app.get("/pdv", response_class=HTMLResponse)
 async def pdv_caixa(request: Request):
@@ -121,13 +125,15 @@ async def pdv_caixa(request: Request):
 
         window.onload = () => document.getElementById('leitor').focus();
         document.addEventListener('click', (e) => {
-            if(e.target.tagName !== 'BUTTON' && e.target.tagName !== 'SELECT') {
+            // Mantém o input do leitor focado, a menos que o usuário clique em um botão, select ou no input de CPF
+            if(e.target.tagName !== 'BUTTON' && e.target.tagName !== 'SELECT' && e.target.tagName !== 'INPUT') {
                 document.getElementById('leitor').focus();
             }
         });
 
         async function processarBipe(event) {
             if(event.key === 'Enter') {
+                event.preventDefault(); // Evita recarregar a página
                 let input = document.getElementById('leitor');
                 let codigo = input.value.trim();
                 input.value = ''; 
@@ -167,13 +173,16 @@ async def pdv_caixa(request: Request):
 
         function finalizarCompra() {
             if(carrinho.length === 0) return alert('O caixa está vazio!');
+            
             let form = document.createElement('form');
             form.method = 'POST'; form.action = '/finalizar_pdv';
             
             let i1 = document.createElement('input'); i1.name = 'itens'; i1.value = JSON.stringify(carrinho);
             let i2 = document.createElement('input'); i2.name = 'pagamento'; i2.value = document.getElementById('forma-pag').value;
+            let i3 = document.createElement('input'); i3.name = 'nfe'; i3.value = document.getElementById('chk-nfe').checked ? 'true' : 'false';
+            let i4 = document.createElement('input'); i4.name = 'cpf_nota'; i4.value = document.getElementById('cpf-nota').value;
             
-            form.append(i1, i2);
+            form.appendChild(i1); form.appendChild(i2); form.appendChild(i3); form.appendChild(i4);
             document.body.appendChild(form);
             form.submit();
         }
@@ -184,25 +193,40 @@ async def pdv_caixa(request: Request):
     <body style='background:#e2e8f0;'>
         <div style='display:flex; height:100vh; width:100%;'>
             <div style='flex:2; padding:20px; display:flex; flex-direction:column; border-right:2px solid #cbd5e1; background:white;'>
-                <h2 style='color:#0ea5e9; margin-top:0;'>🛒 Caixa Livre</h2>
+                <h2 style='color:#0ea5e9; margin-top:0;'>🛒 Caixa Livre (PDV)</h2>
                 <div id='lista-itens' style='flex:1; overflow-y:auto; background:#f8fafc; border:1px solid #cbd5e1; border-radius:8px; padding:10px;'>
                     <div style='color:#94a3b8; text-align:center; margin-top:20px; font-size:18px;'>Aguardando produtos... Bipe o código de barras.</div>
                 </div>
             </div>
+            
             <div style='flex:1; padding:20px; display:flex; flex-direction:column; justify-content:space-between; background:#0f172a; min-width:350px;'>
                 <div>
                     {IMG_LOGO_PEQ}
                     <input type='text' id='leitor' onkeypress='processarBipe(event)' style='width:100%; padding:20px; font-size:20px; text-align:center; border:3px solid #10b981; border-radius:8px; background:white; color:black; outline:none;' placeholder='BIPE O CÓDIGO AQUI' autocomplete='off'>
                 </div>
+                
                 <div style='background:#1e293b; padding:20px; border-radius:8px; margin-top:20px;'>
                     <div style='color:#94a3b8; font-size:18px;'>TOTAL DA VENDA</div>
                     <div id='valor-total' style='color:#10b981; font-size:45px; font-weight:bold; margin-bottom:20px;'>R$ 0.00</div>
+                    
                     <select id='forma-pag' class='input-padrao' style='font-size:18px; padding:15px; margin-bottom:15px; font-weight:bold;'>
                         <option value='DINHEIRO'>💵 DINHEIRO</option>
                         <option value='PIX'>💠 PIX</option>
                         <option value='C. CREDITO'>💳 CARTÃO CRÉDITO</option>
                         <option value='C. DEBITO'>💳 CARTÃO DÉBITO</option>
                     </select>
+
+                    <div style='background:#0f172a; padding:15px; border-radius:8px; margin-bottom:15px; border:1px solid #334155;'>
+                        <div style='display:flex; align-items:center; justify-content:space-between; margin-bottom:10px;'>
+                            <span style='font-weight:bold; color:#10b981; font-size: 16px;'>🧾 Emitir Nota (NFC-e)?</span>
+                            <input type='checkbox' id='chk-nfe' onchange='document.getElementById("box-cpf").style.display = this.checked ? "block" : "none"' style='transform: scale(1.5); cursor: pointer;'>
+                        </div>
+                        <div id='box-cpf' style='display:none;'>
+                            <span style='font-size:13px; color:#94a3b8;'>CPF do Cliente:</span>
+                            <input type='text' id='cpf-nota' class='input-padrao' placeholder='000.000.000-00' style='margin-top:5px; font-size:16px;' autocomplete='off'>
+                        </div>
+                    </div>
+                    
                     <button class='btn-acao' style='background:#0ea5e9; font-size:22px; padding:20px;' onclick='finalizarCompra()'>FINALIZAR VENDA</button>
                     <a href='/central' class='btn-acao' style='background:#334155; margin-top:10px;'>VOLTAR</a>
                 </div>
@@ -224,14 +248,20 @@ async def finalizar_pdv(request: Request):
     f = await request.form()
     itens = json.loads(f.get("itens", "[]"))
     pagamento = f.get("pagamento")
+    
+    nfe_solicitada = f.get("nfe") == "true"
+    cpf_nota = f.get("cpf_nota", "").strip()
+    
     usuario = request.session.get("user", "Caixa")
     total = sum(i['preco'] for i in itens)
     cupom_id = "V" + datetime.now().strftime("%Y%m%d%H%M%S")
     
     try:
         with engine.begin() as conn:
-            conn.execute(text("INSERT INTO comandas (numero_comanda, total_conta, status, forma_pagamento) VALUES (:c, :t, 'FECHADA', :p)"), {"c": cupom_id, "t": total, "p": pagamento})
-            txt = f"--------------------------------\n      MERCEARIA JPMS\nCUPOM: {cupom_id}\nCAIXA: {usuario.upper()}\nDATA: {datetime.now().strftime('%d/%m/%Y %H:%M')}\n--------------------------------\n"
+            # Insere a comanda fechada
+            conn.execute(text("INSERT INTO comandas (numero_comanda, total_conta, status, forma_pagamento, nfe_solicitada, cpf_nota) VALUES (:c, :t, 'FECHADA', :p, :nfe, :cpf)"), {"c": cupom_id, "t": total, "p": pagamento, "nfe": nfe_solicitada, "cpf": cpf_nota})
+            
+            txt = f"--------------------------------\n   JPMS SOLUCOES DE GESTAO\nCUPOM: {cupom_id}\nCAIXA: {usuario.upper()}\nDATA: {datetime.now().strftime('%d/%m/%Y %H:%M')}\n--------------------------------\n"
             
             for item in itens:
                 conn.execute(text("INSERT INTO vendas_itens (comanda_num, item_nome, valor, status) VALUES (:c, :n, :v, 'FECHADA')"), {"c": cupom_id, "n": item['nome'], "v": item['preco']})
@@ -239,6 +269,13 @@ async def finalizar_pdv(request: Request):
                 txt += f"1x {item['nome'][:20]:<20} R$ {item['preco']:.2f}\n"
                 
             txt += f"--------------------------------\nTOTAL: R$ {total:.2f}\nPAGTO: {pagamento}\n--------------------------------\n"
+            
+            if nfe_solicitada:
+                txt += "EMISSAO DE NFC-e SOLICITADA\n"
+                if cpf_nota:
+                    txt += f"CPF/CNPJ: {cpf_nota}\n"
+                txt += "--------------------------------\n"
+
             conn.execute(text("INSERT INTO fila_impressao (conteudo) VALUES (:txt)"), {"txt": txt})
     except Exception as e: print(f"Erro PDV: {e}")
     
