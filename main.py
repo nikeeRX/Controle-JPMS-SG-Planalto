@@ -85,8 +85,10 @@ IMG_LOGO_PEQ = f"<div style='display:flex; justify-content:center; margin-bottom
 
 @app.get("/logo.png")
 async def exibir_logo(): 
-    try: return FileResponse("logo.png")
-    except: return Response(status_code=404)
+    # Agora o Python verifica com o sistema se o arquivo realmente existe antes de tentar abrir
+    if os.path.exists("logo.png"):
+        return FileResponse("logo.png")
+    return Response(status_code=404)
 
 @app.get("/", response_class=HTMLResponse)
 async def login_page(): 
