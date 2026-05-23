@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Form, Request, Response
+from fastapi import FastAPI, Form, Request, Response, UploadFile, File
 from fastapi.responses import HTMLResponse, RedirectResponse, FileResponse
 from sqlalchemy import create_engine, text
 from starlette.middleware.sessions import SessionMiddleware
@@ -6,6 +6,7 @@ from datetime import datetime, date
 import json
 import urllib.parse
 import os
+import shutil
 
 app = FastAPI()
 app.add_middleware(SessionMiddleware, secret_key="jpms_solucoes_gestao_2026_seguro")
@@ -14,32 +15,41 @@ app.add_middleware(SessionMiddleware, secret_key="jpms_solucoes_gestao_2026_segu
 DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://postgres:GNlZnHiuKAcFnpgXhwILfigqKCNkaHqx@interchange.proxy.rlwy.net:44559/railway")
 engine = create_engine(DATABASE_URL, pool_pre_ping=True)
 
-# Criação das tabelas simplificadas para Mercearia
+# Pasta para salvar o certificado digital enviado pelo usuário
+UPLOAD_DIR = "certificados"
+os.makedirs(UPLOAD_DIR, exist_ok=True)
+
+# Criação das tabelas do sistema JPMS
 with engine.begin() as conn:
     conn.execute(text("""
         CREATE TABLE IF NOT EXISTS usuarios (id SERIAL PRIMARY KEY, username TEXT UNIQUE NOT NULL, password TEXT NOT NULL, role TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS produtos (id SERIAL PRIMARY KEY, codigo_barras TEXT UNIQUE, nome TEXT NOT NULL, categoria TEXT DEFAULT 'OUTROS', preco DECIMAL(10,2) DEFAULT 0.00, estoque INT DEFAULT 0);
-        CREATE TABLE IF NOT EXISTS comandas (id SERIAL PRIMARY KEY, numero_comanda TEXT NOT NULL, total_conta DECIMAL(10,2) DEFAULT 0.00, status TEXT DEFAULT 'FECHADA', forma_pagamento TEXT, data_fechamento TIMESTAMP DEFAULT CURRENT_TIMESTAMP);
+        CREATE TABLE IF NOT EXISTS comandas (id SERIAL PRIMARY KEY, numero_comanda TEXT NOT NULL, total_conta DECIMAL(10,2) DEFAULT 0.00, status TEXT DEFAULT 'FECHADA', forma_pagamento TEXT, data_fechamento TIMESTAMP DEFAULT CURRENT_TIMESTAMP, nfe_solicitada BOOLEAN DEFAULT FALSE, cpf_nota TEXT);
         CREATE TABLE IF NOT EXISTS vendas_itens (id SERIAL PRIMARY KEY, comanda_num TEXT, item_nome TEXT, valor DECIMAL(10,2), data_venda DATE DEFAULT CURRENT_DATE, hora_venda TIME DEFAULT CURRENT_TIME, status TEXT DEFAULT 'FECHADA');
         CREATE TABLE IF NOT EXISTS fila_impressao (id SERIAL PRIMARY KEY, conteudo TEXT, status TEXT DEFAULT 'PENDENTE', data_criacao TIMESTAMP DEFAULT CURRENT_TIMESTAMP);
         CREATE TABLE IF NOT EXISTS historico_estoque (id SERIAL PRIMARY KEY, produto_nome TEXT, qtd_adicionada INT, data_entrada DATE DEFAULT CURRENT_DATE);
+        CREATE TABLE IF NOT EXISTS configuracoes_nfe (id SERIAL PRIMARY KEY, token_focus TEXT, ambiente TEXT DEFAULT 'HOMOLOGACAO', senha_certificado TEXT, nome_arquivo_cert TEXT);
     """))
 
-# Migração segura para adicionar as colunas novas (Código de Barras e Nota Fiscal) sem quebrar o banco atual
+# Migrações seguras de tabelas existentes
 MIGRACOES = [
     "ALTER TABLE produtos ADD COLUMN IF NOT EXISTS codigo_barras TEXT UNIQUE;",
     "ALTER TABLE comandas ADD COLUMN IF NOT EXISTS nfe_solicitada BOOLEAN DEFAULT FALSE;",
-    "ALTER TABLE comandas ADD COLUMN IF NOT EXISTS cpf_nota TEXT;"
+    "ALTER TABLE comandas ADD COLUMN IF NOT EXISTS cpf_nota TEXT;",
+    "CREATE TABLE IF NOT EXISTS configuracoes_nfe (id SERIAL PRIMARY KEY, token_focus TEXT, ambiente TEXT DEFAULT 'HOMOLOGACAO', senha_certificado TEXT, nome_arquivo_cert TEXT);"
 ]
 for mig in MIGRACOES:
     try:
         with engine.begin() as conn: conn.execute(text(mig))
     except Exception: pass
 
-# Cria o Admin Padrão
+# Cria o Admin Padrão e uma linha inicial de configuração fiscal se não existirem
 try:
     with engine.begin() as conn:
         conn.execute(text("INSERT INTO usuarios (username, password, role) VALUES ('admin', '1234', 'admin') ON CONFLICT (username) DO NOTHING"))
+        cfg_exist = conn.execute(text("SELECT id FROM configuracoes_nfe LIMIT 1")).fetchone()
+        if not cfg_exist:
+            conn.execute(text("INSERT INTO configuracoes_nfe (token_focus, ambiente) VALUES ('', 'HOMOLOGACAO')"))
 except Exception: pass
 
 IMG_URL = "/logo.png"
@@ -106,13 +116,89 @@ async def central(request: Request):
     <a href='/baixar_conector' class='btn-acao' style='background:#f59e0b; color:black;'>🖨️ BAIXAR CONECTOR DE IMPRESSORA</a>
     """
     if role == "admin":
-        botoes += "<a href='/usuarios' class='btn-acao' style='background:#475569'>👥 GERENCIAR USUÁRIOS</a>"
+        botoes += """
+        <a href='/config_fiscal' class='btn-acao' style='background:#8b5cf6;'>⚙️ CONFIGURAÇÕES FISCAIS (NFC-e)</a>
+        <a href='/usuarios' class='btn-acao' style='background:#475569'>👥 GERENCIAR USUÁRIOS</a>
+        """
         
     return f"<html><head>{CSS}</head><body><div class='container-center'><div class='card-center'>{IMG_LOGO_PEQ}<p>Operador: <b>{user.upper()}</b></p><div style='display:flex; flex-direction:column; gap:15px; margin-top:20px;'>{botoes}</div><br><a href='/logout' style='color:gray'>Sair</a></div></div></body></html>"
 
 
 # ==========================================
-# MÓDULO 1: CAIXA EXPRESSO (PDV) - ATUALIZADO COM NFE
+# MÓDULO 1: CONFIGURAÇÕES FISCAIS (UPLOAD DO CERTIFICADO A1 E TOKENS)
+# ==========================================
+@app.get("/config_fiscal", response_class=HTMLResponse)
+async def tela_config_fiscal(request: Request):
+    if request.session.get("role") != "admin": return RedirectResponse(url="/central")
+    
+    with engine.connect() as conn:
+        cfg = conn.execute(text("SELECT token_focus, ambiente, nome_arquivo_cert FROM configuracoes_nfe LIMIT 1")).fetchone()
+        
+    token_atual = cfg.token_focus if cfg and cfg.token_focus else ""
+    amb_atual = cfg.ambiente if cfg and cfg.ambiente else "HOMOLOGACAO"
+    cert_atual = cfg.nome_arquivo_cert if cfg and cfg.nome_arquivo_cert else "Nenhum arquivo enviado"
+
+    return f"""<html><head>{CSS}</head><body><div class='container-center'><div class='card-center' style='max-width:600px;'>
+        {IMG_LOGO_PEQ}
+        <h2>⚙️ Configurações de Emissão (Focus NFe)</h2>
+        <p style='color:#64748b; font-size:14px; margin-bottom:20px;'>Configure os parâmetros fiscais e suba seu certificado digital A1 para habilitar as notas fiscais.</p>
+        
+        <form action='/salvar_config_fiscal' method='post' enctype='multipart/form-data' style='text-align:left;'>
+            <label style='font-weight:bold; font-size:14px;'>Token de Produção/Homologação Focus NFe:</label>
+            <input class='input-padrao' name='token_focus' value='{token_atual}' placeholder='Cole seu Token da Focus NFe aqui' required>
+            
+            <label style='font-weight:bold; font-size:14px;'>Ambiente do Sistema:</label>
+            <select class='input-padrao' name='ambiente'>
+                <option value='HOMOLOGACAO' {'selected' if amb_atual == 'HOMOLOGACAO' else ''}>🧪 HOMOLOGAÇÃO (Testes)</option>
+                <option value='PRODUCAO' {'selected' if amb_atual == 'PRODUCAO' else ''}>🚀 PRODUÇÃO (Vendas Reais)</option>
+            </select>
+            
+            <div style='background:#f1f5f9; padding:15px; border-radius:8px; border:1px solid #cbd5e1; margin:15px 0;'>
+                <h4 style='margin-top:0; color:#8b5cf6;'>🔑 Certificado Digital A1 (.pfx)</h4>
+                <p style='font-size:12px; color:#64748b; margin-top:-5px;'>Arquivo Atual: <b>{cert_atual}</b></p>
+                <input type='file' name='arquivo_certificado' accept='.pfx,.p12' style='margin-bottom:10px;'><br>
+                <label style='font-size:13px; font-weight:bold;'>Senha do Certificado:</label>
+                <input type='password' class='input-padrao' name='senha_certificado' placeholder='Senha do arquivo .pfx' style='padding:8px; font-size:14px;'>
+            </div>
+            
+            <button class='btn-acao' style='background:#8b5cf6; font-size:16px; margin-top:10px;'>💾 SALVAR CREDENCIAIS FISCAIS</button>
+        </form>
+        <br><a href='/central' style='color:gray'>Voltar ao Painel</a>
+    </div></div></body></html>"""
+
+@app.post("/salvar_config_fiscal")
+async def salvar_config_fiscal(request: Request, token_focus: str = Form(...), ambiente: str = Form(...), senha_certificado: str = Form(None), arquivo_certificado: UploadFile = File(None)):
+    if request.session.get("role") != "admin": return RedirectResponse(url="/central")
+    
+    nome_original_cert = None
+    if arquivo_certificado and arquivo_certificado.filename:
+        nome_original_cert = arquivo_certificado.filename
+        file_path = os.path.join(UPLOAD_DIR, nome_original_cert)
+        with open(file_path, "wb") as buffer:
+            shutil.copyfileobj(arquivo_certificado.file, buffer)
+            
+    try:
+        with engine.begin() as conn:
+            if nome_original_cert:
+                conn.execute(text("""
+                    UPDATE configuracoes_nfe 
+                    SET token_focus = :tk, ambiente = :amb, senha_certificado = :senha, nome_arquivo_cert = :nome 
+                    WHERE id = (SELECT id FROM configuracoes_nfe LIMIT 1)
+                """), {"tk": token_focus.strip(), "amb": ambiente, "senha": senha_certificado, "nome": nome_original_cert})
+            else:
+                conn.execute(text("""
+                    UPDATE configuracoes_nfe 
+                    SET token_focus = :tk, ambiente = :amb 
+                    WHERE id = (SELECT id FROM configuracoes_nfe LIMIT 1)
+                """), {"tk": token_focus.strip(), "amb": ambiente})
+    except Exception as e:
+        print(f"Erro ao salvar configurações fiscais: {e}")
+        
+    return HTMLResponse("<script>alert('Configurações Fiscais atualizadas com sucesso!'); window.location.href='/config_fiscal';</script>")
+
+
+# ==========================================
+# MÓDULO 2: CAIXA EXPRESSO (PDV)
 # ==========================================
 @app.get("/pdv", response_class=HTMLResponse)
 async def pdv_caixa(request: Request):
@@ -125,7 +211,6 @@ async def pdv_caixa(request: Request):
 
         window.onload = () => document.getElementById('leitor').focus();
         document.addEventListener('click', (e) => {
-            // Mantém o input do leitor focado, a menos que o usuário clique em um botão, select ou no input de CPF
             if(e.target.tagName !== 'BUTTON' && e.target.tagName !== 'SELECT' && e.target.tagName !== 'INPUT') {
                 document.getElementById('leitor').focus();
             }
@@ -133,7 +218,7 @@ async def pdv_caixa(request: Request):
 
         async function processarBipe(event) {
             if(event.key === 'Enter') {
-                event.preventDefault(); // Evita recarregar a página
+                event.preventDefault();
                 let input = document.getElementById('leitor');
                 let codigo = input.value.trim();
                 input.value = ''; 
@@ -248,42 +333,35 @@ async def finalizar_pdv(request: Request):
     f = await request.form()
     itens = json.loads(f.get("itens", "[]"))
     pagamento = f.get("pagamento")
-    
     nfe_solicitada = f.get("nfe") == "true"
     cpf_nota = f.get("cpf_nota", "").strip()
-    
     usuario = request.session.get("user", "Caixa")
     total = sum(i['preco'] for i in itens)
     cupom_id = "V" + datetime.now().strftime("%Y%m%d%H%M%S")
     
     try:
         with engine.begin() as conn:
-            # Insere a comanda fechada
             conn.execute(text("INSERT INTO comandas (numero_comanda, total_conta, status, forma_pagamento, nfe_solicitada, cpf_nota) VALUES (:c, :t, 'FECHADA', :p, :nfe, :cpf)"), {"c": cupom_id, "t": total, "p": pagamento, "nfe": nfe_solicitada, "cpf": cpf_nota})
             
             txt = f"--------------------------------\n   JPMS SOLUCOES DE GESTAO\nCUPOM: {cupom_id}\nCAIXA: {usuario.upper()}\nDATA: {datetime.now().strftime('%d/%m/%Y %H:%M')}\n--------------------------------\n"
-            
             for item in itens:
                 conn.execute(text("INSERT INTO vendas_itens (comanda_num, item_nome, valor, status) VALUES (:c, :n, :v, 'FECHADA')"), {"c": cupom_id, "n": item['nome'], "v": item['preco']})
                 conn.execute(text("UPDATE produtos SET estoque = GREATEST(estoque - 1, 0) WHERE id = :id"), {"id": item['id']})
                 txt += f"1x {item['nome'][:20]:<20} R$ {item['preco']:.2f}\n"
                 
             txt += f"--------------------------------\nTOTAL: R$ {total:.2f}\nPAGTO: {pagamento}\n--------------------------------\n"
-            
             if nfe_solicitada:
                 txt += "EMISSAO DE NFC-e SOLICITADA\n"
-                if cpf_nota:
-                    txt += f"CPF/CNPJ: {cpf_nota}\n"
+                if cpf_nota: txt += f"CPF/CNPJ: {cpf_nota}\n"
                 txt += "--------------------------------\n"
 
             conn.execute(text("INSERT INTO fila_impressao (conteudo) VALUES (:txt)"), {"txt": txt})
     except Exception as e: print(f"Erro PDV: {e}")
-    
     return RedirectResponse(url="/pdv", status_code=303)
 
 
 # ==========================================
-# MÓDULO 2: ESTOQUE (COM CÓDIGO DE BARRAS)
+# MÓDULO 3: ESTOQUE (COM CÓDIGO DE BARRAS)
 # ==========================================
 @app.get("/estoque", response_class=HTMLResponse)
 async def tela_estoque(request: Request):
@@ -309,7 +387,6 @@ async def tela_estoque(request: Request):
             <button class='btn-acao' style='background:#0ea5e9; width:100%; font-size:18px;'>SALVAR NO SISTEMA</button>
         </form>
     </div>"""
-    
     return f"<html><head>{CSS}</head><body><div class='container-center'><div class='card-center' style='max-width:800px;'><h2>📦 Gestão de Estoque</h2>{add_form}<div style='max-height:400px; overflow-y:auto; border:1px solid #cbd5e1;'><table><tr><th style='color:#0f172a'>Cód. Barras</th><th style='color:#0f172a'>Produto</th><th style='color:#0f172a'>Estoque</th><th style='color:#0f172a'>Ações</th></tr>{linhas}</table></div><br><a href='/central' style='color:gray'>Voltar</a></div></div></body></html>"
 
 @app.post("/novo_produto")
@@ -342,7 +419,7 @@ async def excluir_produto(request: Request):
 
 
 # ==========================================
-# MÓDULO 3: RELATÓRIOS SIMPLIFICADOS
+# MÓDULO 4: RELATÓRIOS SIMPLIFICADOS
 # ==========================================
 @app.get("/dashboard", response_class=HTMLResponse)
 async def dashboard(request: Request):
@@ -364,7 +441,7 @@ async def dashboard(request: Request):
 
 
 # ==========================================
-# MÓDULO 4: USUÁRIOS E IMPRESSORA
+# MÓDULO 5: USUÁRIOS E IMPRESSORA
 # ==========================================
 @app.get("/usuarios", response_class=HTMLResponse)
 async def tela_usuarios(request: Request):
