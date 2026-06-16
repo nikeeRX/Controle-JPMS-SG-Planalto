@@ -24,7 +24,7 @@ os.makedirs(UPLOAD_DIR, exist_ok=True)
 # Criação das tabelas do sistema JPMS / Steel Goose
 with engine.begin() as conn:
     conn.execute(text("""
-        CREATE TABLE IF NOT EXISTS usuarios (id SERIAL PRIMARY KEY, username TEXT UNIQUE NOT NULL, password TEXT NOT NULL, role TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS usuarios (id SERIAL PRIMARY KEY, username TEXT UNIQUE NOT NULL, password TEXT NOT NULL, role TEXT NOT NULL, status TEXT DEFAULT 'ATIVO');
         CREATE TABLE IF NOT EXISTS produtos (id SERIAL PRIMARY KEY, codigo_barras TEXT UNIQUE, nome TEXT NOT NULL, categoria TEXT DEFAULT 'OUTROS', preco DECIMAL(10,2) DEFAULT 0.00, estoque INT DEFAULT 0);
         CREATE TABLE IF NOT EXISTS comandas (id SERIAL PRIMARY KEY, numero_comanda TEXT NOT NULL, total_conta DECIMAL(10,2) DEFAULT 0.00, status TEXT DEFAULT 'ABERTA', forma_pagamento TEXT, data_fechamento TIMESTAMP DEFAULT CURRENT_TIMESTAMP, nfe_solicitada BOOLEAN DEFAULT FALSE, cpf_nota TEXT);
         CREATE TABLE IF NOT EXISTS vendas_itens (id SERIAL PRIMARY KEY, comanda_num TEXT, item_nome TEXT, valor DECIMAL(10,2), data_venda DATE DEFAULT CURRENT_DATE, hora_venda TIME DEFAULT CURRENT_TIME, status TEXT DEFAULT 'ABERTA');
@@ -33,17 +33,21 @@ with engine.begin() as conn:
         CREATE TABLE IF NOT EXISTS configuracoes_nfe (id SERIAL PRIMARY KEY, token_focus TEXT, ambiente TEXT DEFAULT 'HOMOLOGACAO', senha_certificado TEXT, nome_arquivo_cert TEXT);
     """))
 
-# Migrações seguras
-try:
-    with engine.begin() as conn:
-        conn.execute(text("ALTER TABLE comandas ALTER COLUMN status SET DEFAULT 'ABERTA';"))
-except Exception: pass
+# Migrações seguras e adição do STATUS nos usuários antigos
+MIGRACOES = [
+    "ALTER TABLE comandas ALTER COLUMN status SET DEFAULT 'ABERTA';",
+    "ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'ATIVO';"
+]
+for mig in MIGRACOES:
+    try:
+        with engine.begin() as conn: conn.execute(text(mig))
+    except Exception: pass
 
 # Cria o Admin Padrão e linha fiscal
 try:
     with engine.begin() as conn:
-        conn.execute(text("INSERT INTO usuarios (username, password, role) VALUES ('admin', '1234', 'admin') ON CONFLICT (username) DO NOTHING"))
-        cfg_exist = conn.execute(text("SELECT id FROM configuracoes_nfe LIMIT 1")).fetchonefetchone()
+        conn.execute(text("INSERT INTO usuarios (username, password, role, status) VALUES ('admin', '1234', 'admin', 'ATIVO') ON CONFLICT (username) DO NOTHING"))
+        cfg_exist = conn.execute(text("SELECT id FROM configuracoes_nfe LIMIT 1")).fetchone()
         if not cfg_exist:
             conn.execute(text("INSERT INTO configuracoes_nfe (token_focus, ambiente) VALUES ('', 'HOMOLOGACAO')"))
 except Exception: pass
@@ -51,13 +55,13 @@ except Exception: pass
 # ==========================================
 # IDENTIDADE VISUAL: STEEL GOOSE MOTO GROUP
 # ==========================================
-COR_FUNDO = "#121214"      # Tela grandona de fundo (Meio preto / Grafite escuro fosco)
-COR_CARD = "#000000"       # Fundo todo preto absoluto (Login e blocos somem com o quadrado da logo)
-COR_AMARELO = "#F3BA16"    # Amarelo Ouro (Logo)
-COR_VERMELHO = "#C82828"   # Vermelho Sangue (Logo)
-COR_TEXTO = "#E0E0E0"      # Branco Gelo
-COR_BORDA = "#222225"      # Bordas sutis contrastantes
-COR_INPUT = "#141416"      # Fundo interno dos inputs
+COR_FUNDO = "#121214"      
+COR_CARD = "#000000"       
+COR_AMARELO = "#F3BA16"    
+COR_VERMELHO = "#C82828"   
+COR_TEXTO = "#E0E0E0"      
+COR_BORDA = "#222225"      
+COR_INPUT = "#141416"      
 
 IMG_URL = "/logo.png"
 
@@ -118,17 +122,21 @@ async def exibir_logo():
 
 @app.get("/", response_class=HTMLResponse)
 async def login_page(): 
-    return f"<html><head>{CSS}</head><body><div class='container-center'><div class='card-center'>{IMG_LOGO_PEQ}<h2>BAR OLD GOOSE</h2><form action='/login' method='post'><input class='input-padrao' name='user' placeholder='Usuário' required><input class='input-padrao' name='pw' type='password' placeholder='Senha' required><button class='btn-acao' style='padding:15px; font-size:18px; margin-top: 15px;'>ENTRAR NO SISTEMA</button></form></div></div></body></html>"
+    return f"<html><head>{CSS}</head><body><div class='container-center'><div class='card-center'>{IMG_LOGO_PEQ}<h2>SISTEMA DE GESTÃO</h2><form action='/login' method='post'><input class='input-padrao' name='user' placeholder='Usuário' required><input class='input-padrao' name='pw' type='password' placeholder='Senha' required><button class='btn-acao' style='padding:15px; font-size:18px; margin-top: 15px;'>ENTRAR NO SISTEMA</button></form></div></div></body></html>"
 
 @app.post("/login")
 async def login(request: Request):
     f = await request.form()
     with engine.connect() as conn:
-        user = conn.execute(text("SELECT username, role FROM usuarios WHERE username = :u AND password = :p"), {"u": f.get("user", "").strip().lower(), "p": f.get("pw", "")}).fetchone()
+        user = conn.execute(text("SELECT username, role, status FROM usuarios WHERE username = :u AND password = :p"), {"u": f.get("user", "").strip().lower(), "p": f.get("pw", "")}).fetchone()
         if user:
+            # TRAVA DE STATUS DO LOGIN AQUI
+            if user.status == 'BLOQUEADO':
+                return HTMLResponse("<script>alert('Acesso Bloqueado! Procure o Administrador ou Gerente.'); window.location.href='/';</script>")
+                
             request.session["user"], request.session["role"] = user.username, user.role
             return RedirectResponse(url="/central", status_code=303)
-    return HTMLResponse("<script>alert('Acesso Negado!'); window.location.href='/';</script>")
+    return HTMLResponse("<script>alert('Acesso Negado! Verifique as credenciais.'); window.location.href='/';</script>")
 
 @app.get("/logout")
 async def logout(request: Request): 
@@ -140,23 +148,21 @@ async def central(request: Request):
     user, role = request.session.get("user"), request.session.get("role")
     if not user: return RedirectResponse(url="/")
     
-    # Botões que TODO MUNDO (inclusive o Caixa) tem acesso
     botoes = """
     <a href='/pdv' class='btn-acao' style='font-size: 20px; padding: 25px;'>🛒 PAINEL DE VENDAS (COMANDAS)</a>
     <a href='/baixar_conector' class='btn-acao btn-dark'>🖨️ BAIXAR CONECTOR DE IMPRESSORA</a>
     """
     
-    # Botões que SÓ O ADMIN e O GERENTE podem acessar (Sumiu pro caixa!)
     if role in ["admin", "gerente"]:
         botoes += """
         <a href='/estoque' class='btn-acao btn-dark' style='font-size: 20px; padding: 25px;'>📦 GESTÃO DE ESTOQUE</a>
         <a href='/dashboard' class='btn-acao btn-red'>📊 RELATÓRIOS E FECHAMENTO</a>
+        <a href='/usuarios' class='btn-acao' style='background:#222; color:#AAA;'>👥 CONTROLE DE ACESSOS (CAIXAS)</a>
         """
         
     if role == "admin":
         botoes += """
         <a href='/config_fiscal' class='btn-acao' style='background:#222; color:#AAA;'>⚙️ CONFIGURAÇÕES FISCAIS (NFC-e)</a>
-        <a href='/usuarios' class='btn-acao' style='background:#222; color:#AAA;'>👥 GERENCIAR USUÁRIOS</a>
         """
         
     return f"<html><head>{CSS}</head><body><div class='container-center'><div class='card-center'>{IMG_LOGO_PEQ}<p style='color:#888;'>Operador: <b style='color:{COR_AMARELO};'>{user.upper()}</b></p><div style='display:flex; flex-direction:column; gap:15px; margin-top:20px;'>{botoes}</div><br><a href='/logout' style='color:#C82828; font-weight:bold;'>[ SAIR ]</a></div></div></body></html>"
@@ -404,7 +410,6 @@ async def tela_estoque(request: Request):
             
     add_form = f"<div style='background:#0A0A0A; padding:20px; border-radius:10px; margin-bottom:20px; text-align:left; border:1px solid {COR_BORDA};'><h3>➕ CADASTRAR PRODUTO NO BAR</h3><form action='/novo_produto' method='post' style='display:flex; flex-wrap:wrap; gap:10px;'><input name='nome' placeholder='Nome da Bebida / Patch / Item' class='input-padrao' style='flex:2; min-width:200px;' required><select name='cat' class='input-padrao' style='flex:1; min-width:120px;' required><option value='BEBIDAS'>BEBIDAS GÉLIDAS</option><option value='ALIMENTOS'>PETISCOS / COZINHA</option><option value='VESTUARIO'>PATCHES / ACESSÓRIOS</option><option value='OUTROS'>OUTROS</option></select><input name='preco' placeholder='Preço de Venda' step='0.01' type='number' class='input-padrao' style='width:120px;' required><input name='qtd' type='number' placeholder='Qtd Estoque' class='input-padrao' style='width:100px;' required><button class='btn-acao' style='width:100%; font-size:18px;'>SALVAR NO ESTOQUE</button></form></div>"
     
-    # HTML DO MODAL DE EDIÇÃO
     modal_edit = f"""
     <div id='editModal' style='display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.8); z-index:1000; align-items:center; justify-content:center;'>
         <div class='card-center' style='position:relative; width:90%; max-width:400px; padding:20px; background:#121214; border:1px solid {COR_BORDA}; text-align:left;'>
@@ -517,7 +522,6 @@ async def dashboard(request: Request, inicio: str = "", fim: str = "", tipo_vend
         for p in pag_q: 
             if p.forma_pagamento in totais_pag: totais_pag[p.forma_pagamento] = float(p.total or 0)
             
-        # NOVA CONSULTA DE RELATÓRIO: Puxando Qtd e Valor Total de CADA item vendido
         itens_db = conn.execute(text(f"SELECT item_nome, COUNT(*) as qtd, SUM(valor) as total_valor FROM vendas_itens WHERE status = 'FECHADA' AND comanda_num IN (SELECT numero_comanda FROM comandas WHERE {where_clause}) GROUP BY item_nome ORDER BY qtd DESC"), params).fetchall()
         
         linhas_tabela = ""
@@ -566,33 +570,94 @@ async def dashboard(request: Request, inicio: str = "", fim: str = "", tipo_vend
 
 
 # ==========================================
-# MÓDULO 5: GERENCIAR USUÁRIOS E IMPRESSORA
+# MÓDULO 5: GERENCIAR USUÁRIOS COM SISTEMA DE BLOQUEIO
 # ==========================================
 @app.get("/usuarios", response_class=HTMLResponse)
 async def tela_usuarios(request: Request):
-    if request.session.get("role") != "admin": return RedirectResponse(url="/central")
+    role_session = request.session.get("role")
+    if role_session not in ["admin", "gerente"]: return RedirectResponse(url="/central")
+    
     linhas = ""
     with engine.connect() as conn:
-        users_db = conn.execute(text("SELECT id, username, role FROM usuarios ORDER BY role, username")).fetchall()
+        users_db = conn.execute(text("SELECT id, username, role, status FROM usuarios ORDER BY role, username")).fetchall()
         for r in users_db:
-            acoes = f"<form action='/excluir_usuario' method='post' style='margin:0;' onsubmit='return confirm(\"Excluir?\");'><input type='hidden' name='id' value='{r.id}'><button class='btn-acao btn-red' style='padding:8px;'>🗑️</button></form>" if r.username != "admin" else ""
-            linhas += f"<tr><td>{r.username.upper()}</td><td style='color:{COR_AMARELO};'>{r.role.upper()}</td><td>{acoes}</td></tr>"
-    add_form = f"<div style='background:#0A0A0A; padding:20px; border-radius:10px; margin-bottom:20px; text-align:left; border:1px solid {COR_BORDA};'><h3>➕ NOVO OPERADOR</h3><form action='/novo_usuario' method='post' style='display:flex; flex-wrap:wrap; gap:10px;'><input name='u' placeholder='Login' class='input-padrao' style='flex:1;' required><input name='p' type='password' placeholder='Senha' class='input-padrao' style='flex:1;' required><select name='r' class='input-padrao' style='flex:1;'><option value='gerente'>GERENTE</option><option value='caixa'>CAIXA</option></select><button class='btn-acao' style='width:100%;'>CRIAR ACESSO</button></form></div>"
-    return f"<html><head>{CSS}</head><body><div class='container-center'><div class='card-center'>{IMG_LOGO_PEQ}<h2>Gerenciar Usuários</h2>{add_form}<div style='max-height:400px; overflow-y:auto; border:1px solid {COR_BORDA};'><table><tr><th>Login</th><th>Cargo</th><th>Ação</th></tr>{linhas}</table></div><br><a href='/central' style='color:#777'>Voltar</a></div></div></body></html>"
+            acoes = ""
+            if r.username != "admin":
+                # Botão de Bloqueio/Desbloqueio (Verde se tiver bloqueado, Laranja se estiver Ativo)
+                if r.status in ['ATIVO', None]:
+                    btn_block = f"<form action='/toggle_usuario' method='post' style='margin:0;'><input type='hidden' name='id' value='{r.id}'><button class='btn-acao' style='background:#f59e0b; padding:8px; margin:0; width:40px;' title='Bloquear Acesso'>🔒</button></form>"
+                else:
+                    btn_block = f"<form action='/toggle_usuario' method='post' style='margin:0;'><input type='hidden' name='id' value='{r.id}'><button class='btn-acao' style='background:#10b981; padding:8px; margin:0; width:40px;' title='Liberar Acesso'>🔓</button></form>"
+                
+                btn_del = f"<form action='/excluir_usuario' method='post' style='margin:0;' onsubmit='return confirm(\"Excluir Operador?\");'><input type='hidden' name='id' value='{r.id}'><button class='btn-acao btn-red' style='padding:8px; margin:0; width:40px;' title='Excluir Permanentemente'>🗑️</button></form>"
+                
+                # Regra: Admin mexe em todos, Gerente só mexe em Caixa
+                if role_session == "admin" or (role_session == "gerente" and r.role == "caixa"):
+                    acoes = f"<div style='display:flex; gap:5px; justify-content:center;'>{btn_block}{btn_del}</div>"
+                else:
+                    acoes = f"<span style='color:#777; font-size:12px;'>Bloqueado pelo Admin</span>"
+            
+            # Formatação do Status
+            if r.status in ['ATIVO', None]:
+                status_badge = f"<span style='color:#10b981; font-weight:bold; font-size:12px;'>ATIVO</span>"
+            else:
+                status_badge = f"<span style='color:{COR_VERMELHO}; font-weight:bold; font-size:12px;'>BLOQUEADO</span>"
+
+            linhas += f"<tr><td>{r.username.upper()}</td><td style='color:{COR_AMARELO};'>{r.role.upper()}</td><td>{status_badge}</td><td style='text-align:center;'>{acoes}</td></tr>"
+            
+    options_role = "<option value='caixa'>CAIXA</option>"
+    if role_session == "admin": options_role = "<option value='gerente'>GERENTE</option><option value='caixa'>CAIXA</option>"
+            
+    add_form = f"<div style='background:#0A0A0A; padding:20px; border-radius:10px; margin-bottom:20px; text-align:left; border:1px solid {COR_BORDA};'><h3>➕ NOVO OPERADOR</h3><form action='/novo_usuario' method='post' style='display:flex; flex-wrap:wrap; gap:10px;'><input name='u' placeholder='Login' class='input-padrao' style='flex:1;' required><input name='p' type='password' placeholder='Senha' class='input-padrao' style='flex:1;' required><select name='r' class='input-padrao' style='flex:1;'>{options_role}</select><button class='btn-acao' style='width:100%;'>CRIAR ACESSO</button></form></div>"
+    
+    return f"<html><head>{CSS}</head><body><div class='container-center'><div class='card-center' style='max-width:800px;'>{IMG_LOGO_PEQ}<h2>Controle de Acessos</h2>{add_form}<div style='max-height:400px; overflow-y:auto; border:1px solid {COR_BORDA};'><table><tr><th>Login</th><th>Cargo</th><th>Status</th><th style='text-align:center;'>Ações</th></tr>{linhas}</table></div><br><a href='/central' class='btn-acao btn-dark' style='width:200px; margin:auto;'>Voltar ao Menu</a></div></div></body></html>"
+
+@app.post("/toggle_usuario")
+async def toggle_usuario(request: Request):
+    role_session = request.session.get("role")
+    if role_session not in ["admin", "gerente"]: return RedirectResponse(url="/central")
+    f = await request.form()
+    user_id = f.get("id")
+    try:
+        with engine.begin() as conn:
+            target = conn.execute(text("SELECT username, role, status FROM usuarios WHERE id = :id"), {"id": user_id}).fetchone()
+            if target and target.username != 'admin':
+                if role_session == "gerente" and target.role != "caixa":
+                    pass # Gerente não pode bloquear outro gerente ou admin
+                else:
+                    novo_status = 'BLOQUEADO' if target.status in ['ATIVO', None] else 'ATIVO'
+                    conn.execute(text("UPDATE usuarios SET status = :s WHERE id = :id"), {"s": novo_status, "id": user_id})
+    except: pass
+    return RedirectResponse(url="/usuarios", status_code=303)
 
 @app.post("/novo_usuario")
 async def novo_usuario(request: Request):
+    role_session = request.session.get("role")
+    if role_session not in ["admin", "gerente"]: return RedirectResponse(url="/central")
     f = await request.form()
+    new_role = f.get("r")
+    if role_session == "gerente" and new_role != "caixa":
+        new_role = "caixa" # Força ser caixa se um gerente tentar burlar o formulário
     try:
-        with engine.begin() as conn: conn.execute(text("INSERT INTO usuarios (username, password, role) VALUES (:u, :p, :r) ON CONFLICT (username) DO NOTHING"), {"u": f.get("u").lower(), "p": f.get("p"), "r": f.get("r")})
+        with engine.begin() as conn: 
+            conn.execute(text("INSERT INTO usuarios (username, password, role, status) VALUES (:u, :p, :r, 'ATIVO') ON CONFLICT (username) DO NOTHING"), {"u": f.get("u").lower(), "p": f.get("p"), "r": new_role})
     except: pass
     return RedirectResponse(url="/usuarios", status_code=303)
 
 @app.post("/excluir_usuario")
 async def excluir_usuario(request: Request):
+    role_session = request.session.get("role")
+    if role_session not in ["admin", "gerente"]: return RedirectResponse(url="/central")
     f = await request.form()
+    user_id = f.get("id")
     try:
-        with engine.begin() as conn: conn.execute(text("DELETE FROM usuarios WHERE id = :id AND username != 'admin'"), {"id": f.get("id")})
+        with engine.begin() as conn:
+            target = conn.execute(text("SELECT username, role FROM usuarios WHERE id = :id"), {"id": user_id}).fetchone()
+            if target and target.username != 'admin':
+                if role_session == "gerente" and target.role != "caixa":
+                    pass
+                else:
+                    conn.execute(text("DELETE FROM usuarios WHERE id = :id"), {"id": user_id})
     except: pass
     return RedirectResponse(url="/usuarios", status_code=303)
 
