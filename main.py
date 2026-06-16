@@ -140,12 +140,19 @@ async def central(request: Request):
     user, role = request.session.get("user"), request.session.get("role")
     if not user: return RedirectResponse(url="/")
     
+    # Botões que TODO MUNDO (inclusive o Caixa) tem acesso
     botoes = """
     <a href='/pdv' class='btn-acao' style='font-size: 20px; padding: 25px;'>🛒 PAINEL DE VENDAS (COMANDAS)</a>
-    <a href='/estoque' class='btn-acao btn-dark' style='font-size: 20px; padding: 25px;'>📦 GESTÃO DE ESTOQUE</a>
-    <a href='/dashboard' class='btn-acao btn-red'>📊 RELATÓRIOS E FECHAMENTO</a>
     <a href='/baixar_conector' class='btn-acao btn-dark'>🖨️ BAIXAR CONECTOR DE IMPRESSORA</a>
     """
+    
+    # Botões que SÓ O ADMIN e O GERENTE podem acessar (Sumiu pro caixa!)
+    if role in ["admin", "gerente"]:
+        botoes += """
+        <a href='/estoque' class='btn-acao btn-dark' style='font-size: 20px; padding: 25px;'>📦 GESTÃO DE ESTOQUE</a>
+        <a href='/dashboard' class='btn-acao btn-red'>📊 RELATÓRIOS E FECHAMENTO</a>
+        """
+        
     if role == "admin":
         botoes += """
         <a href='/config_fiscal' class='btn-acao' style='background:#222; color:#AAA;'>⚙️ CONFIGURAÇÕES FISCAIS (NFC-e)</a>
@@ -156,7 +163,7 @@ async def central(request: Request):
 
 
 # ==========================================
-# PAINEL DE COMANDAS COM FILTRO LIVE POR DIGITAÇÃO E CORREÇÃO DO BANCO
+# PAINEL DE COMANDAS COM FILTRO LIVE E CORREÇÃO DO BANCO
 # ==========================================
 @app.get("/pdv", response_class=HTMLResponse)
 async def pdv_painel(request: Request):
@@ -182,7 +189,6 @@ async def pdv_painel(request: Request):
     if not linhas_comandas:
         linhas_comandas = "<p id='sem-comandas' style='color:#555; grid-column: 1/-1; text-align:center;'>Nenhuma comanda aberta no momento. Clique acima para iniciar.</p>"
 
-    # Script JS de filtro inteligente por digitação corrigido (usando trim() ao invés de strip())
     js_busca = """
     <script>
         function filtrarComandas() {
@@ -210,10 +216,7 @@ async def abrir_comanda(nome_comanda: str = Form(...)):
     nome_limpo = nome_comanda.strip().replace("/", "-")
     try:
         with engine.begin() as conn:
-            # 1. Verifica se já existe uma comanda com esse nome ABERTA no momento.
             existe = conn.execute(text("SELECT id FROM comandas WHERE numero_comanda = :c AND status = 'ABERTA' LIMIT 1"), {"c": nome_limpo}).fetchone()
-            
-            # 2. Se NÃO EXISTE uma aberta, criamos uma nova do zero.
             if not existe:
                 conn.execute(text("INSERT INTO comandas (numero_comanda, total_conta, status) VALUES (:c, 0.00, 'ABERTA')"), {"c": nome_limpo})
     except Exception as e:
@@ -416,7 +419,7 @@ async def excluir_produto(request: Request):
 
 
 # ==========================================
-# MÓDULO 4: RELATÓRIOS E FECHAMENTO
+# MÓDULO 4: RELATÓRIOS COM NOVA TABELA DE PRODUTOS VENDIDOS
 # ==========================================
 @app.get("/dashboard", response_class=HTMLResponse)
 async def dashboard(request: Request, inicio: str = "", fim: str = "", tipo_venda: str = "TODOS"):
@@ -434,15 +437,58 @@ async def dashboard(request: Request, inicio: str = "", fim: str = "", tipo_vend
     with engine.connect() as conn:
         kpi = conn.execute(text(f"SELECT SUM(total_conta) as total FROM comandas WHERE {where_clause}"), params).fetchone()
         faturamento_filtrado = float(kpi.total or 0)
+        
         pag_q = conn.execute(text(f"SELECT forma_pagamento, SUM(total_conta) as total FROM comandas WHERE {where_clause} GROUP BY forma_pagamento"), params).fetchall()
         totais_pag = {"DINHEIRO": 0.0, "PIX": 0.0, "C. CREDITO": 0.0, "C. DEBITO": 0.0}
         for p in pag_q: 
             if p.forma_pagamento in totais_pag: totais_pag[p.forma_pagamento] = float(p.total or 0)
-        top_db = conn.execute(text(f"SELECT item_nome, COUNT(*) as qtd FROM vendas_itens WHERE status = 'FECHADA' AND comanda_num IN (SELECT numero_comanda FROM comandas WHERE {where_clause}) GROUP BY item_nome ORDER BY qtd DESC LIMIT 5"), params).fetchall()
-        html_top = "".join([f"<div class='item-linha'><span>{i+1}º {r.item_nome}</span><b style='color:{COR_AMARELO};'>{r.qtd} un</b></div>" for i, r in enumerate(top_db)])
+            
+        # NOVA CONSULTA DE RELATÓRIO: Puxando Qtd e Valor Total de CADA item vendido
+        itens_db = conn.execute(text(f"SELECT item_nome, COUNT(*) as qtd, SUM(valor) as total_valor FROM vendas_itens WHERE status = 'FECHADA' AND comanda_num IN (SELECT numero_comanda FROM comandas WHERE {where_clause}) GROUP BY item_nome ORDER BY qtd DESC"), params).fetchall()
+        
+        linhas_tabela = ""
+        for it in itens_db:
+            linhas_tabela += f"<tr><td style='color:#FFF; font-weight:bold;'>{it.item_nome}</td><td style='color:{COR_AMARELO}; text-align:center; font-weight:bold;'>{it.qtd}</td><td style='color:#FFF; text-align:right;'>R$ {float(it.total_valor or 0):.2f}</td></tr>"
 
     opcoes_select = f"<option value='TODOS' {'selected' if tipo_venda == 'TODOS' else ''}>⚙️ TODOS OS TIPOS</option><option value='DINHEIRO' {'selected' if tipo_venda == 'DINHEIRO' else ''}>💵 DINHEIRO</option><option value='PIX' {'selected' if tipo_venda == 'PIX' else ''}>💠 PIX</option><option value='C. CREDITO' {'selected' if tipo_venda == 'C. CREDITO' else ''}>💳 CARTÃO CRÉDITO</option><option value='C. DEBITO' {'selected' if tipo_venda == 'C. DEBITO' else ''}>💳 CARTÃO DÉBITO</option>"
-    return f"<html><head>{CSS}</head><body><div class='container-center'><div class='card-center' style='max-width:800px;'>{IMG_LOGO_PEQ}<h2>📊 Relatório Financeiro</h2><form method='get' class='filtro-box'><div style='flex:1; min-width:140px;'><label>Data Inicial:</label><br><input type='date' name='inicio' value='{dt_inicio}' class='input-padrao' style='margin:5px 0 0 0; padding:8px;'></div><div style='flex:1; min-width:140px;'><label>Data Final:</label><br><input type='date' name='fim' value='{dt_fim}' class='input-padrao' style='margin:5px 0 0 0; padding:8px;'></div><div style='flex:1; min-width:160px;'><label>Tipo:</label><br><select name='tipo_venda' class='input-padrao' style='margin:5px 0 0 0; padding:8px;'>{opcoes_select}</select></div><div style='display:flex; align-items:flex-end; min-width:100px;'><button class='btn-acao' style='margin:0; height:41px;'>FILTRAR</button></div></form><div class='grid-dash'><div class='card-kpi'><h3>Faturamento do Período</h3><p>R$ {faturamento_filtrado:.2f}</p></div></div><div style='display:flex; justify-content:space-between; flex-wrap:wrap; gap:10px; margin-bottom:20px;'><div style='background:#111; padding:15px; border-radius:8px; border-left:4px solid {COR_AMARELO}; flex:1;'><b>💵 Dinheiro:</b><br><span style='color:#FFF;'>R$ {totais_pag['DINHEIRO']:.2f}</span></div><div style='background:#111; padding:15px; border-radius:8px; border-left:4px solid {COR_AMARELO}; flex:1;'><b>💠 PIX:</b><br><span style='color:#FFF;'>R$ {totais_pag['PIX']:.2f}</span></div><div style='background:#111; padding:15px; border-radius:8px; border-left:4px solid {COR_AMARELO}; flex:1;'><b>💳 Cartões:</b><br><span style='color:#FFF;'>R$ {(totais_pag['C. CREDITO'] + totais_pag['C. DEBITO']):.2f}</span></div></div><div class='chart-container'><h3>🏆 MAIS VENDIDOS</h3>{html_top if html_top else '<p style=\"color:#777;\">Nenhuma venda encontrada.</p>'}</div><br><a href='/central' class='btn-acao btn-dark' style='width:200px; margin:auto;'>VOLTAR</a></div></div></body></html>"
+    
+    return f"""<html><head>{CSS}</head><body><div class='container-center'><div class='card-center' style='max-width:800px;'>
+        {IMG_LOGO_PEQ}<h2>📊 Relatório Financeiro</h2>
+        
+        <form method='get' class='filtro-box'>
+            <div style='flex:1; min-width:140px;'><label>Data Inicial:</label><br><input type='date' name='inicio' value='{dt_inicio}' class='input-padrao' style='margin:5px 0 0 0; padding:8px;'></div>
+            <div style='flex:1; min-width:140px;'><label>Data Final:</label><br><input type='date' name='fim' value='{dt_fim}' class='input-padrao' style='margin:5px 0 0 0; padding:8px;'></div>
+            <div style='flex:1; min-width:160px;'><label>Tipo:</label><br><select name='tipo_venda' class='input-padrao' style='margin:5px 0 0 0; padding:8px;'>{opcoes_select}</select></div>
+            <div style='display:flex; align-items:flex-end; min-width:100px;'><button class='btn-acao' style='margin:0; height:41px;'>FILTRAR</button></div>
+        </form>
+        
+        <div class='grid-dash'><div class='card-kpi'><h3>Faturamento do Período</h3><p>R$ {faturamento_filtrado:.2f}</p></div></div>
+        <div style='display:flex; justify-content:space-between; flex-wrap:wrap; gap:10px; margin-bottom:20px;'>
+            <div style='background:#111; padding:15px; border-radius:8px; border-left:4px solid {COR_AMARELO}; flex:1;'><b>💵 Dinheiro:</b><br><span style='color:#FFF;'>R$ {totais_pag['DINHEIRO']:.2f}</span></div>
+            <div style='background:#111; padding:15px; border-radius:8px; border-left:4px solid {COR_AMARELO}; flex:1;'><b>💠 PIX:</b><br><span style='color:#FFF;'>R$ {totais_pag['PIX']:.2f}</span></div>
+            <div style='background:#111; padding:15px; border-radius:8px; border-left:4px solid {COR_AMARELO}; flex:1;'><b>💳 Cartões:</b><br><span style='color:#FFF;'>R$ {(totais_pag['C. CREDITO'] + totais_pag['C. DEBITO']):.2f}</span></div>
+        </div>
+        
+        <div class='chart-container' style='padding: 15px;'>
+            <h3 style='border-bottom:2px solid {COR_BORDA}; padding-bottom:5px; margin-top:0;'>📋 LISTA DE ITENS VENDIDOS</h3>
+            <div style='max-height:300px; overflow-y:auto;'>
+                <table style='margin-top:0;'>
+                    <thead style='background:#0A0A0A; position:sticky; top:0; box-shadow: 0 2px 4px rgba(0,0,0,0.8);'>
+                        <tr>
+                            <th style='color:{COR_AMARELO};'>Produto</th>
+                            <th style='color:{COR_AMARELO}; text-align:center;'>Qtd</th>
+                            <th style='color:{COR_AMARELO}; text-align:right;'>Total Arrecadado (R$)</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {linhas_tabela if linhas_tabela else "<tr><td colspan='3' style='color:#777; text-align:center;'>Nenhuma venda encontrada no período.</td></tr>"}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+        
+        <br><a href='/central' class='btn-acao btn-dark' style='width:200px; margin:auto;'>VOLTAR AO PAINEL</a>
+    </div></div></body></html>"""
 
 
 # ==========================================
