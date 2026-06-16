@@ -13,11 +13,11 @@ import re
 app = FastAPI()
 app.add_middleware(SessionMiddleware, secret_key="jpms_solucoes_gestao_2026_seguro")
 
-# Conexão com a Base de Dados do Railway
+# Conexão com o Banco de Dados do Railway
 DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://postgres:GNlZnHiuKAcFnpgXhwILfigqKCNkaHqx@interchange.proxy.rlwy.net:44559/railway")
 engine = create_engine(DATABASE_URL, pool_pre_ping=True)
 
-# Pasta para guardar o certificado digital enviado pelo utilizador
+# Pasta para salvar o certificado digital enviado pelo usuário
 UPLOAD_DIR = "certificados"
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
@@ -51,13 +51,13 @@ except Exception: pass
 # ==========================================
 # IDENTIDADE VISUAL: STEEL GOOSE MOTO GROUP
 # ==========================================
-COR_FUNDO = "#050505"      # Preto profundo
-COR_CARD = "#121212"       # Cinza bem escuro para os blocos
+COR_FUNDO = "#121214"      # Tela grandona de fundo (Meio preto / Grafite escuro fosco)
+COR_CARD = "#000000"       # Fundo todo preto absoluto (Login e blocos somem com o quadrado da logo)
 COR_AMARELO = "#F3BA16"    # Amarelo Ouro (Logo)
 COR_VERMELHO = "#C82828"   # Vermelho Sangue (Logo)
 COR_TEXTO = "#E0E0E0"      # Branco Gelo
-COR_BORDA = "#2A2A2A"      # Bordas sutis
-COR_INPUT = "#1A1A1A"      # Fundo dos inputs
+COR_BORDA = "#222225"      # Bordas sutis contrastantes
+COR_INPUT = "#141416"      # Fundo interno dos inputs
 
 IMG_URL = "/logo.png"
 
@@ -80,7 +80,7 @@ CSS = f"""
     .btn-red:hover {{ box-shadow: 0 0 12px rgba(200, 40, 40, 0.5); }}
     
     .container-center {{ display: flex; align-items: center; justify-content: center; height: 100vh; padding: 20px; overflow-y: auto; }}
-    .card-center {{ background: {COR_CARD}; color: {COR_TEXTO}; padding: 30px; border-radius: 15px; width: 100%; max-width: 650px; text-align: center; box-shadow: 0 8px 30px rgba(0,0,0,0.9); margin: auto; border: 1px solid {COR_BORDA}; }}
+    .card-center {{ background: {COR_CARD}; color: {COR_TEXTO}; padding: 30px; border-radius: 15px; width: 100%; max-width: 650px; text-align: center; box-shadow: 0 12px 40px rgba(0,0,0,0.9); margin: auto; border: 1px solid {COR_BORDA}; }}
     
     .input-padrao {{ width: 100%; padding: 12px; margin: 8px 0; border: 1px solid {COR_BORDA}; border-radius: 5px; font-size: 16px; box-sizing: border-box; background: {COR_INPUT}; color: {COR_AMARELO}; font-weight: bold; }}
     .input-padrao:focus {{ outline: none; border-color: {COR_AMARELO}; box-shadow: 0 0 5px rgba(243, 186, 22, 0.3); }}
@@ -101,7 +101,6 @@ CSS = f"""
     .filtro-box {{ display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 20px; background: #0A0A0A; padding: 15px; border-radius: 8px; border: 1px solid {COR_BORDA}; width: 100%; text-align: left; }}
     .filtro-box label {{ font-size: 12px; color: #777; font-weight: bold; text-transform: uppercase; }}
     
-    /* Grid de produtos no estilo Bar */
     .grid-produtos {{ display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 10px; max-height: 500px; overflow-y: auto; padding-right: 5px; }}
     .card-produto {{ background: {COR_INPUT}; border: 1px solid {COR_BORDA}; border-radius: 8px; padding: 12px; text-align: center; cursor: pointer; transition: 0.2s; }}
     .card-produto:hover {{ border-color: {COR_AMARELO}; background: #222; }}
@@ -119,7 +118,7 @@ async def exibir_logo():
 
 @app.get("/", response_class=HTMLResponse)
 async def login_page(): 
-    return f"<html><head>{CSS}</head><body><div class='container-center'><div class='card-center'>{IMG_LOGO_PEQ}<h2>SISTEMA DE GESTÃO</h2><form action='/login' method='post'><input class='input-padrao' name='user' placeholder='Utilizador' required><input class='input-padrao' name='pw' type='password' placeholder='Palavra-passe' required><button class='btn-acao' style='padding:15px; font-size:18px; margin-top: 15px;'>ENTRAR NO SISTEMA</button></form></div></div></body></html>"
+    return f"<html><head>{CSS}</head><body><div class='container-center'><div class='card-center'>{IMG_LOGO_PEQ}<h2>SISTEMA DE GESTÃO</h2><form action='/login' method='post'><input class='input-padrao' name='user' placeholder='Usuário' required><input class='input-padrao' name='pw' type='password' placeholder='Senha' required><button class='btn-acao' style='padding:15px; font-size:18px; margin-top: 15px;'>ENTRAR NO SISTEMA</button></form></div></div></body></html>"
 
 @app.post("/login")
 async def login(request: Request):
@@ -144,32 +143,31 @@ async def central(request: Request):
     botoes = """
     <a href='/pdv' class='btn-acao' style='font-size: 20px; padding: 25px;'>🛒 PAINEL DE VENDAS (COMANDAS)</a>
     <a href='/estoque' class='btn-acao btn-dark' style='font-size: 20px; padding: 25px;'>📦 GESTÃO DE ESTOQUE</a>
-    <a href='/dashboard' class='btn-acao btn-red'>📊 RELATÓRIOS E FECHO</a>
+    <a href='/dashboard' class='btn-acao btn-red'>📊 RELATÓRIOS E FECHAMENTO</a>
     <a href='/baixar_conector' class='btn-acao btn-dark'>🖨️ BAIXAR CONECTOR DE IMPRESSORA</a>
     """
     if role == "admin":
         botoes += """
         <a href='/config_fiscal' class='btn-acao' style='background:#222; color:#AAA;'>⚙️ CONFIGURAÇÕES FISCAIS (NFC-e)</a>
-        <a href='/usuarios' class='btn-acao' style='background:#222; color:#AAA;'>👥 GERIR UTILIZADORES</a>
+        <a href='/usuarios' class='btn-acao' style='background:#222; color:#AAA;'>👥 GERENCIAR USUÁRIOS</a>
         """
         
     return f"<html><head>{CSS}</head><body><div class='container-center'><div class='card-center'>{IMG_LOGO_PEQ}<p style='color:#888;'>Operador: <b style='color:{COR_AMARELO};'>{user.upper()}</b></p><div style='display:flex; flex-direction:column; gap:15px; margin-top:20px;'>{botoes}</div><br><a href='/logout' style='color:#C82828; font-weight:bold;'>[ SAIR ]</a></div></div></body></html>"
 
 
 # ==========================================
-# NOVO PAINEL DE COMANDAS (ESTILO BAR / QUIOSQUE)
+# PAINEL DE COMANDAS COM FILTRO LIVE POR DIGITAÇÃO
 # ==========================================
 @app.get("/pdv", response_class=HTMLResponse)
 async def pdv_painel(request: Request):
     if not request.session.get("user"): return RedirectResponse(url="/")
     
-    # Procura comandas em aberto
     linhas_comandas = ""
     with engine.connect() as conn:
         comandas_abertas = conn.execute(text("SELECT numero_comanda, total_conta FROM comandas WHERE status = 'ABERTA' ORDER BY numero_comanda")).fetchall()
         for c in comandas_abertas:
             linhas_comandas += f"""
-            <div style='background:{COR_INPUT}; border:1px solid {COR_BORDA}; border-radius:8px; padding:15px; display:flex; justify-content:space-between; align-items:center;'>
+            <div class='card-comanda-item' data-nome='{c.numero_comanda}' style='background:{COR_INPUT}; border:1px solid {COR_BORDA}; border-radius:8px; padding:15px; display:flex; justify-content:space-between; align-items:center;'>
                 <div>
                     <span style='font-size:18px; font-weight:bold; color:{COR_AMARELO};'>📋 {c.numero_comanda.upper()}</span><br>
                     <small style='color:#888;'>Consumo Parcial</small>
@@ -182,19 +180,40 @@ async def pdv_painel(request: Request):
             """
 
     if not linhas_comandas:
-        linhas_comandas = "<p style='color:#555; grid-column: 1/-1; text-align:center;'>Nenhuma comanda aberta no momento. Clique abaixo para iniciar.</p>"
+        linhas_comandas = "<p id='sem-comandas' style='color:#555; grid-column: 1/-1; text-align:center;'>Nenhuma comanda aberta no momento. Clique acima para iniciar.</p>"
 
-    return f"""<html><head>{CSS}</head>
+    # Script JS de filtro inteligente por digitação
+    js_busca = """
+    <script>
+        function filtrarComandas() {
+            let input = document.getElementById('busca-comanda');
+            let filter = input.value.toLowerCase().strip ? input.value.toLowerCase().strip() : input.value.toLowerCase();
+            let container = document.getElementById('lista-comandas-grid');
+            let items = container.getElementsByClassName('card-comanda-item');
+            
+            for (let i = 0; i < items.length; i++) {
+                let nomeComanda = items[i].getAttribute('data-nome').toLowerCase();
+                if (nomeComanda.includes(filter)) {
+                    items[i].style.display = "flex";
+                } else {
+                    items[i].style.display = "none";
+                }
+            }
+        }
+    </script>
+    """
+
+    return f"""<html><head>{CSS}{js_busca}</head>
     <body style='background:{COR_FUNDO}; overflow-y:auto;'>
         <div class='container-center' style='height:auto; padding:40px 20px;'>
             <div class='card-center' style='max-width:900px;'>
                 {IMG_LOGO_PEQ}
-                <h2>🛒 Controlo de Vendas</h2>
+                <h2>🛒 Controle de Vendas</h2>
                 
                 <div style='background:#0A0A0A; padding:20px; border-radius:10px; border:1px solid {COR_BORDA}; margin-bottom:25px;'>
-                    <h3 style='margin-bottom:15px;'>⚡ GERIR ATENDIMENTO</h3>
+                    <h3 style='margin-bottom:15px;'>⚡ GERENCIAR ATENDIMENTO</h3>
                     <div style='display:flex; gap:15px; flex-wrap:wrap;'>
-                        <button class='btn-acao' style='flex:1; font-size:18px; padding:20px;' onclick='document.getElementById("box-comanda").style.display="block"; document.getElementById("box-avulso").style.display="none";'>📋 ABRIR COMANDA</button>
+                        <button class='btn-acao' style='flex:1; font-size:18px; padding:20px;' onclick='document.getElementById("box-comanda").style.display="block";'>📋 ABRIR COMANDA</button>
                         <form action='/pdv/abrir_avulso' method='post' style='flex:1; margin:0;'>
                             <button class='btn-acao btn-dark' style='width:100%; font-size:18px; padding:20px;'>🛒 VENDA AVULSA</button>
                         </form>
@@ -202,15 +221,20 @@ async def pdv_painel(request: Request):
                     
                     <div id='box-comanda' style='display:none; margin-top:20px; border-top:1px dashed {COR_BORDA}; padding-top:15px;'>
                         <form action='/pdv/abrir_comanda' method='post'>
-                            <label style='font-size:14px; color:#AAA;'>Identificação da Comanda (Nome ou Nº):</label>
+                            <label style='font-size:14px; color:#AAA;'>Identificação da Comanda (Nome do Irmão ou Nº):</label>
                             <input class='input-padrao' name='nome_comanda' placeholder='Ex: Pará, Mesa 3, Comanda 12...' required autocomplete='off'>
                             <button class='btn-acao' style='width:200px; margin-top:5px;'>INICIAR COMANDA</button>
                         </form>
                     </div>
                 </div>
 
+                <div style='margin-bottom: 15px; text-align: left;'>
+                    <label style='font-size: 12px; color: #777; font-weight: bold;'>🔍 BUSCAR COMANDA ATIVA:</label>
+                    <input type='text' id='busca-comanda' oninput='filtrarComandas()' class='input-padrao' placeholder='Comece a digitar o nome da comanda...' autocomplete='off'>
+                </div>
+
                 <h3>📋 Comandas Ativas no Painel</h3>
-                <div style='display:grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap:15px; text-align:left; margin-top:15px;'>
+                <div id='lista-comandas-grid' style='display:grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap:15px; text-align:left; margin-top:15px;'>
                     {linhas_comandas}
                 </div>
                 
@@ -225,13 +249,18 @@ async def abrir_comanda(nome_comanda: str = Form(...)):
     nome_limpo = nome_comanda.strip().replace("/", "-")
     try:
         with engine.begin() as conn:
-            conn.execute(text("INSERT INTO comandas (numero_comanda, total_conta, status) VALUES (:c, 0.00, 'ABERTA') ON CONFLICT (numero_comanda) DO NOTHING"), {"c": nome_limpo})
+            # Força o status para ABERTA e zera saldo se a comanda antiga com mesmo nome já tiver sido FECHADA
+            conn.execute(text("""
+                INSERT INTO comandas (numero_comanda, total_conta, status) 
+                VALUES (:c, 0.00, 'ABERTA') 
+                ON CONFLICT (numero_comanda) 
+                DO UPDATE SET status = 'ABERTA', total_conta = 0.00 WHERE comandas.status = 'FECHADA'
+            """), {"c": nome_limpo})
     except Exception: pass
     return RedirectResponse(url=f"/pdv/comanda/{urllib.parse.quote(nome_limpo)}", status_code=303)
 
 @app.post("/pdv/abrir_avulso")
 async def abrir_avulso():
-    # Cria uma identificação única para a venda direta rápida
     id_avulso = "AVULSO-" + datetime.now().strftime("%H%M%S")
     with engine.begin() as conn:
         conn.execute(text("INSERT INTO comandas (numero_comanda, total_conta, status) VALUES (:c, 0.00, 'ABERTA')"), {"c": id_avulso})
@@ -239,7 +268,7 @@ async def abrir_avulso():
 
 
 # ==========================================
-# ECRÃ DE LANÇAMENTO DA COMANDA (MOTO CLUBE STYLE)
+# TELA DE LANÇAMENTO DA COMANDA 
 # ==========================================
 @app.get("/pdv/comanda/{numero_comanda}", response_class=HTMLResponse)
 async def tela_comanda_detalhe(numero_comanda: str, request: Request):
@@ -249,7 +278,6 @@ async def tela_comanda_detalhe(numero_comanda: str, request: Request):
         comanda = conn.execute(text("SELECT numero_comanda, total_conta, status FROM comandas WHERE numero_comanda = :c"), {"c": numero_comanda}).fetchone()
         if not comanda: return RedirectResponse(url="/pdv")
         
-        # Pega nos itens já lançados (LINHA CORRIGIDA AQUI 👇)
         itens_lançados = conn.execute(text("SELECT id, item_nome, valor FROM vendas_itens WHERE comanda_num = :c AND status = 'ABERTA' ORDER BY id DESC"), {"c": numero_comanda}).fetchall()
         
         html_itens = ""
@@ -267,7 +295,6 @@ async def tela_comanda_detalhe(numero_comanda: str, request: Request):
             </div>
             """
         
-        # Pega em todos os produtos para montar a grelha com ESTOQUE VISÍVEL
         produtos_db = conn.execute(text("SELECT id, nome, preco, estoque FROM produtos ORDER BY nome")).fetchall()
         html_produtos = ""
         for p in produtos_db:
@@ -279,7 +306,6 @@ async def tela_comanda_detalhe(numero_comanda: str, request: Request):
             </div>
             """
 
-    # Form Invisível via JS para inclusão rápida ao clicar no card
     js_inject = f"""
     <script>
         function adicionarItem(prodId) {{
@@ -325,17 +351,17 @@ async def tela_comanda_detalhe(numero_comanda: str, request: Request):
                         <select name='pagamento' class='input-padrao' style='font-size:16px; padding:12px; margin-bottom:12px;'>
                             <option value='01'>💵 DINHEIRO</option>
                             <option value='17'>💠 PIX</option>
-                            <option value='03'>💳 CARTÃO DE CRÉDITO</option>
-                            <option value='04'>💳 CARTÃO DE DÉBITO</option>
+                            <option value='03'>💳 CARTÃO CRÉDITO</option>
+                            <option value='04'>💳 CARTÃO DÉBITO</option>
                         </select>
 
                         <div style='background:#050505; padding:12px; border-radius:8px; margin-bottom:15px; border:1px solid {COR_BORDA};'>
                             <div style='display:flex; align-items:center; justify-content:space-between;'>
-                                <span style='font-weight:bold; color:{COR_VERMELHO}; font-size:14px;'>🧾 Emitir Fatura?</span>
+                                <span style='font-weight:bold; color:{COR_VERMELHO}; font-size:14px;'>🧾 Emitir Cupom Fiscal?</span>
                                 <input type='checkbox' name='nfe' value='true' onchange='document.getElementById("box-cpf-det").style.display = this.checked ? "block" : "none"' style='transform: scale(1.3); cursor: pointer;'>
                             </div>
                             <div id='box-cpf-det' style='display:none; margin-top:8px;'>
-                                <input type='text' name='cpf_nota' class='input-padrao' placeholder='NIF do Cliente (Opcional)' style='font-size:14px; padding:8px;'>
+                                <input type='text' name='cpf_nota' class='input-padrao' placeholder='CPF do Cliente (Opcional)' style='font-size:14px; padding:8px;'>
                             </div>
                         </div>
                         
@@ -350,18 +376,15 @@ async def tela_comanda_detalhe(numero_comanda: str, request: Request):
 
 
 # ==========================================
-# ENDPOINTS LOGÍSTICOS (ADICIONAR/REMOVER/FECHAR)
+# ENDPOINTS LOGÍSTICOS
 # ==========================================
 @app.post("/pdv/adicionar_item")
 async def pdv_adicionar_item(comanda_num: str = Form(...), produto_id: int = Form(...)):
     with engine.begin() as conn:
         prod = conn.execute(text("SELECT nome, preco FROM produtos WHERE id = :id"), {"id": produto_id}).fetchone()
         if prod:
-            # Lança o item associado à comanda
             conn.execute(text("INSERT INTO vendas_itens (comanda_num, item_nome, valor, status) VALUES (:c, :n, :v, 'ABERTA')"), {"c": comanda_num, "n": prod.nome, "v": prod.preco})
-            # Atualiza o valor total acumulado da comanda
             conn.execute(text("UPDATE comandas SET total_conta = total_conta + :v WHERE numero_comanda = :c"), {"v": prod.preco, "c": comanda_num})
-            # Abate 1 unidade do estoque imediatamente
             conn.execute(text("UPDATE produtos SET estoque = GREATEST(estoque - 1, 0) WHERE id = :id"), {"id": produto_id})
             
     return RedirectResponse(url=f"/pdv/comanda/{urllib.parse.quote(comanda_num)}", status_code=303)
@@ -371,11 +394,8 @@ async def pdv_remover_item(item_id: int = Form(...), num_comanda: str = Form(...
     with engine.begin() as conn:
         item = conn.execute(text("SELECT item_nome, valor FROM vendas_itens WHERE id = :id"), {"id": item_id}).fetchone()
         if item:
-            # Estorna o valor da comanda
             conn.execute(text("UPDATE comandas SET total_conta = GREATEST(total_conta - :v, 0.00) WHERE numero_comanda = :c"), {"v": item.valor, "c": num_comanda})
-            # Remove o item da lista
             conn.execute(text("DELETE FROM vendas_itens WHERE id = :id"), {"id": item_id})
-            # Devolve 1 unidade de volta para o estoque físico
             conn.execute(text("UPDATE produtos SET estoque = estoque + 1 WHERE nome = :n"), {"n": item.item_nome})
             
     return RedirectResponse(url=f"/pdv/comanda/{urllib.parse.quote(num_comanda)}", status_code=303)
@@ -391,14 +411,11 @@ async def finalizar_comanda(request: Request, comanda_num: str = Form(...), paga
         comanda = conn.execute(text("SELECT total_conta FROM comandas WHERE numero_comanda = :c AND status = 'ABERTA'"), {"c": comanda_num}).fetchone()
         if not comanda: return RedirectResponse(url="/pdv", status_code=303)
         
-        # Pega nos itens para o Recibo Impresso
         itens = conn.execute(text("SELECT item_nome, valor FROM vendas_itens WHERE comanda_num = :c AND status = 'ABERTA'"), {"c": comanda_num}).fetchall()
         
-        # Atualiza Status da Comanda e dos Itens para FECHADO
         conn.execute(text("UPDATE comandas SET status = 'FECHADA', forma_pagamento = :p, nfe_solicitada = :nfe, cpf_nota = :cpf, data_fechamento = CURRENT_TIMESTAMP WHERE numero_comanda = :c"), {"p": nome_pagamento, "nfe": nfe_solicitada, "cpf": cpf_nota, "c": comanda_num})
         conn.execute(text("UPDATE vendas_itens SET status = 'FECHADA' WHERE comanda_num = :c"), {"c": comanda_num})
         
-        # Gera o layout do ticket físico na fila de impressão
         txt = f"--------------------------------\n   STEEL GOOSE MOTO GROUP\nPLANALTO-DF\n--------------------------------\nCOMANDA: {comanda_num.upper()}\nOPERADOR: {usuario.upper()}\nDATA: {datetime.now().strftime('%d/%m/%Y %H:%M')}\n--------------------------------\n"
         for idx, item in enumerate(itens):
             txt += f"1x {item.item_nome[:20]:<20} R$ {float(item.valor):.2f}\n"
@@ -406,9 +423,8 @@ async def finalizar_comanda(request: Request, comanda_num: str = Form(...), paga
         
         if nfe_solicitada:
             txt += "EMISSAO DE NFC-e SOLICITADA\n"
-            if cpf_nota: txt += f"NIF: {cpf_nota}\n"
+            if cpf_nota: txt += f"CPF/CNPJ: {cpf_nota}\n"
             
-            # Módulo de Integração Fiscal da Focus NFe (Opcional se houver token configurado)
             cfg = conn.execute(text("SELECT token_focus, ambiente FROM configuracoes_nfe LIMIT 1")).fetchone()
             if cfg and cfg.token_focus:
                 url_api = "https://api.focusnfe.com.br/v2/nfce"
@@ -447,7 +463,7 @@ async def finalizar_comanda(request: Request, comanda_num: str = Form(...), paga
 
 
 # ==========================================
-# MÓDULO 3: CONFIGURAÇÃO DE ESTOQUE
+# MÓDULO 3: GESTÃO DE ESTOQUE
 # ==========================================
 @app.get("/estoque", response_class=HTMLResponse)
 async def tela_estoque(request: Request):
@@ -461,11 +477,11 @@ async def tela_estoque(request: Request):
             
     add_form = f"""
     <div style='background:#0A0A0A; padding:20px; border-radius:10px; margin-bottom:20px; text-align:left; border:1px solid {COR_BORDA};'>
-        <h3>➕ REGISTAR PRODUTO NO BAR</h3>
+        <h3>➕ CADASTRAR PRODUTO NO BAR</h3>
         <form action='/novo_produto' method='post' style='display:flex; flex-wrap:wrap; gap:10px;'>
             <input name='nome' placeholder='Nome da Bebida / Patch / Item' class='input-padrao' style='flex:2; min-width:200px;' required>
             <select name='cat' class='input-padrao' style='flex:1; min-width:120px;' required>
-                <option value='BEBIDAS'>BEBIDAS</option><option value='ALIMENTOS'>PETISCOS / COZINHA</option><option value='VESTUARIO'>PATCHeS / ACESSÓRIOS</option><option value='OUTROS'>OUTROS</option>
+                <option value='BEBIDAS'>BEBIDAS GÉLIDAS</option><option value='ALIMENTOS'>PETISCOS / COZINHA</option><option value='VESTUARIO'>PATCHES / ACESSÓRIOS</option><option value='OUTROS'>OUTROS</option>
             </select>
             <input name='preco' placeholder='Preço de Venda' step='0.01' type='number' class='input-padrao' style='width:120px;' required>
             <input name='qtd' type='number' placeholder='Qtd Estoque' class='input-padrao' style='width:100px;' required>
@@ -500,8 +516,9 @@ async def excluir_produto(request: Request):
     except: pass
     return RedirectResponse(url="/estoque", status_code=303)
 
+
 # ==========================================
-# MÓDULO 4: RELATÓRIOS E FECHO
+# MÓDULO 4: RELATÓRIOS E FECHAMENTO
 # ==========================================
 @app.get("/dashboard", response_class=HTMLResponse)
 async def dashboard(request: Request, inicio: str = "", fim: str = "", tipo_venda: str = "TODOS"):
@@ -530,8 +547,8 @@ async def dashboard(request: Request, inicio: str = "", fim: str = "", tipo_vend
     <option value='TODOS' {'selected' if tipo_venda == 'TODOS' else ''}>⚙️ TODOS OS TIPOS</option>
     <option value='DINHEIRO' {'selected' if tipo_venda == 'DINHEIRO' else ''}>💵 DINHEIRO</option>
     <option value='PIX' {'selected' if tipo_venda == 'PIX' else ''}>💠 PIX</option>
-    <option value='C. CREDITO' {'selected' if tipo_venda == 'C. CREDITO' else ''}>💳 CARTÃO DE CRÉDITO</option>
-    <option value='C. DEBITO' {'selected' if tipo_venda == 'C. DEBITO' else ''}>💳 CARTÃO DE DÉBITO</option>
+    <option value='C. CREDITO' {'selected' if tipo_venda == 'C. CREDITO' else ''}>💳 CARTÃO CRÉDITO</option>
+    <option value='C. DEBITO' {'selected' if tipo_venda == 'C. DEBITO' else ''}>💳 CARTÃO DÉBITO</option>
     """
     return f"""<html><head>{CSS}</head><body><div class='container-center'><div class='card-center' style='max-width:800px;'>
         {IMG_LOGO_PEQ}<h2>📊 Relatório Financeiro</h2>
@@ -551,8 +568,9 @@ async def dashboard(request: Request, inicio: str = "", fim: str = "", tipo_vend
         <br><a href='/central' class='btn-acao btn-dark' style='width:200px; margin:auto;'>VOLTAR</a>
     </div></div></body></html>"""
 
+
 # ==========================================
-# MÓDULO 5: UTILIZADORES E IMPRESSORA
+# MÓDULO 5: GERENCIAR USUÁRIOS
 # ==========================================
 @app.get("/usuarios", response_class=HTMLResponse)
 async def tela_usuarios(request: Request):
@@ -563,8 +581,8 @@ async def tela_usuarios(request: Request):
         for r in users_db:
             acoes = f"<form action='/excluir_usuario' method='post' style='margin:0;' onsubmit='return confirm(\"Excluir?\");'><input type='hidden' name='id' value='{r.id}'><button class='btn-acao btn-red' style='padding:8px;'>🗑️</button></form>" if r.username != "admin" else ""
             linhas += f"<tr><td>{r.username.upper()}</td><td style='color:{COR_AMARELO};'>{r.role.upper()}</td><td>{acoes}</td></tr>"
-    add_form = f"<div style='background:#0A0A0A; padding:20px; border-radius:10px; margin-bottom:20px; text-align:left; border:1px solid {COR_BORDA};'><h3>➕ NOVO OPERADOR</h3><form action='/novo_usuario' method='post' style='display:flex; flex-wrap:wrap; gap:10px;'><input name='u' placeholder='Login' class='input-padrao' style='flex:1;' required><input name='p' type='password' placeholder='Palavra-passe' class='input-padrao' style='flex:1;' required><select name='r' class='input-padrao' style='flex:1;'><option value='gerente'>GERENTE</option><option value='caixa'>CAIXA</option></select><button class='btn-acao' style='width:100%;'>CRIAR ACESSO</button></form></div>"
-    return f"<html><head>{CSS}</head><body><div class='container-center'><div class='card-center'>{IMG_LOGO_PEQ}<h2>Controlo de Acessos</h2>{add_form}<div style='max-height:400px; overflow-y:auto; border:1px solid {COR_BORDA};'><table><tr><th>Login</th><th>Cargo</th><th>Ação</th></tr>{linhas}</table></div><br><a href='/central' style='color:#777'>Voltar</a></div></div></body></html>"
+    add_form = f"<div style='background:#0A0A0A; padding:20px; border-radius:10px; margin-bottom:20px; text-align:left; border:1px solid {COR_BORDA};'><h3>➕ NOVO OPERADOR</h3><form action='/novo_usuario' method='post' style='display:flex; flex-wrap:wrap; gap:10px;'><input name='u' placeholder='Login' class='input-padrao' style='flex:1;' required><input name='p' type='password' placeholder='Senha' class='input-padrao' style='flex:1;' required><select name='r' class='input-padrao' style='flex:1;'><option value='gerente'>GERENTE</option><option value='caixa'>CAIXA</option></select><button class='btn-acao' style='width:100%;'>CRIAR ACESSO</button></form></div>"
+    return f"<html><head>{CSS}</head><body><div class='container-center'><div class='card-center'>{IMG_LOGO_PEQ}<h2>Gerenciar Usuários</h2>{add_form}<div style='max-height:400px; overflow-y:auto; border:1px solid {COR_BORDA};'><table><tr><th>Login</th><th>Cargo</th><th>Ação</th></tr>{linhas}</table></div><br><a href='/central' style='color:#777'>Voltar</a></div></div></body></html>"
 
 @app.post("/novo_usuario")
 async def novo_usuario(request: Request):
@@ -614,7 +632,7 @@ def imprimir_ticket(texto):
         win32print.EndPagePrinter(hPrinter)
         win32print.EndDocPrinter(hPrinter)
         win32print.ClosePrinter(hPrinter)
-        print("✔️ Recibo Impresso!")
+        print("✔️ Cupom Impresso!")
     except Exception as e:
         print(f"❌ Erro: {{e}}")
 
