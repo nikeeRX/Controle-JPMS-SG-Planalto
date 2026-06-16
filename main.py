@@ -13,11 +13,11 @@ import re
 app = FastAPI()
 app.add_middleware(SessionMiddleware, secret_key="jpms_solucoes_gestao_2026_seguro")
 
-# Conexão com o Banco de Dados do Railway
+# Conexão com a Base de Dados do Railway
 DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://postgres:GNlZnHiuKAcFnpgXhwILfigqKCNkaHqx@interchange.proxy.rlwy.net:44559/railway")
 engine = create_engine(DATABASE_URL, pool_pre_ping=True)
 
-# Pasta para salvar o certificado digital enviado pelo usuário
+# Pasta para guardar o certificado digital enviado pelo utilizador
 UPLOAD_DIR = "certificados"
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
@@ -119,7 +119,7 @@ async def exibir_logo():
 
 @app.get("/", response_class=HTMLResponse)
 async def login_page(): 
-    return f"<html><head>{CSS}</head><body><div class='container-center'><div class='card-center'>{IMG_LOGO_PEQ}<h2>SISTEMA DE GESTÃO</h2><form action='/login' method='post'><input class='input-padrao' name='user' placeholder='Usuário' required><input class='input-padrao' name='pw' type='password' placeholder='Senha' required><button class='btn-acao' style='padding:15px; font-size:18px; margin-top: 15px;'>ENTRAR NO SISTEMA</button></form></div></div></body></html>"
+    return f"<html><head>{CSS}</head><body><div class='container-center'><div class='card-center'>{IMG_LOGO_PEQ}<h2>SISTEMA DE GESTÃO</h2><form action='/login' method='post'><input class='input-padrao' name='user' placeholder='Utilizador' required><input class='input-padrao' name='pw' type='password' placeholder='Palavra-passe' required><button class='btn-acao' style='padding:15px; font-size:18px; margin-top: 15px;'>ENTRAR NO SISTEMA</button></form></div></div></body></html>"
 
 @app.post("/login")
 async def login(request: Request):
@@ -144,26 +144,26 @@ async def central(request: Request):
     botoes = """
     <a href='/pdv' class='btn-acao' style='font-size: 20px; padding: 25px;'>🛒 PAINEL DE VENDAS (COMANDAS)</a>
     <a href='/estoque' class='btn-acao btn-dark' style='font-size: 20px; padding: 25px;'>📦 GESTÃO DE ESTOQUE</a>
-    <a href='/dashboard' class='btn-acao btn-red'>📊 RELATÓRIOS E FECHAMENTO</a>
+    <a href='/dashboard' class='btn-acao btn-red'>📊 RELATÓRIOS E FECHO</a>
     <a href='/baixar_conector' class='btn-acao btn-dark'>🖨️ BAIXAR CONECTOR DE IMPRESSORA</a>
     """
     if role == "admin":
         botoes += """
         <a href='/config_fiscal' class='btn-acao' style='background:#222; color:#AAA;'>⚙️ CONFIGURAÇÕES FISCAIS (NFC-e)</a>
-        <a href='/usuarios' class='btn-acao' style='background:#222; color:#AAA;'>👥 GERENCIAR USUÁRIOS</a>
+        <a href='/usuarios' class='btn-acao' style='background:#222; color:#AAA;'>👥 GERIR UTILIZADORES</a>
         """
         
     return f"<html><head>{CSS}</head><body><div class='container-center'><div class='card-center'>{IMG_LOGO_PEQ}<p style='color:#888;'>Operador: <b style='color:{COR_AMARELO};'>{user.upper()}</b></p><div style='display:flex; flex-direction:column; gap:15px; margin-top:20px;'>{botoes}</div><br><a href='/logout' style='color:#C82828; font-weight:bold;'>[ SAIR ]</a></div></div></body></html>"
 
 
 # ==========================================
-# NOVO PAINEL DE COMANDAS (ESTILO BAR / QUIOSQUE BRAHMA)
+# NOVO PAINEL DE COMANDAS (ESTILO BAR / QUIOSQUE)
 # ==========================================
 @app.get("/pdv", response_class=HTMLResponse)
 async def pdv_painel(request: Request):
     if not request.session.get("user"): return RedirectResponse(url="/")
     
-    # Busca comandas em aberto
+    # Procura comandas em aberto
     linhas_comandas = ""
     with engine.connect() as conn:
         comandas_abertas = conn.execute(text("SELECT numero_comanda, total_conta FROM comandas WHERE status = 'ABERTA' ORDER BY numero_comanda")).fetchall()
@@ -189,10 +189,10 @@ async def pdv_painel(request: Request):
         <div class='container-center' style='height:auto; padding:40px 20px;'>
             <div class='card-center' style='max-width:900px;'>
                 {IMG_LOGO_PEQ}
-                <h2>🛒 Controle de Vendas</h2>
+                <h2>🛒 Controlo de Vendas</h2>
                 
                 <div style='background:#0A0A0A; padding:20px; border-radius:10px; border:1px solid {COR_BORDA}; margin-bottom:25px;'>
-                    <h3 style='margin-bottom:15px;'>⚡ GERENCIAR ATENDIMENTO</h3>
+                    <h3 style='margin-bottom:15px;'>⚡ GERIR ATENDIMENTO</h3>
                     <div style='display:flex; gap:15px; flex-wrap:wrap;'>
                         <button class='btn-acao' style='flex:1; font-size:18px; padding:20px;' onclick='document.getElementById("box-comanda").style.display="block"; document.getElementById("box-avulso").style.display="none";'>📋 ABRIR COMANDA</button>
                         <form action='/pdv/abrir_avulso' method='post' style='flex:1; margin:0;'>
@@ -202,7 +202,7 @@ async def pdv_painel(request: Request):
                     
                     <div id='box-comanda' style='display:none; margin-top:20px; border-top:1px dashed {COR_BORDA}; padding-top:15px;'>
                         <form action='/pdv/abrir_comanda' method='post'>
-                            <label style='font-size:14px; color:#AAA;'>Identificação da Comanda (Nome do Irmão ou Nº):</label>
+                            <label style='font-size:14px; color:#AAA;'>Identificação da Comanda (Nome ou Nº):</label>
                             <input class='input-padrao' name='nome_comanda' placeholder='Ex: Pará, Mesa 3, Comanda 12...' required autocomplete='off'>
                             <button class='btn-acao' style='width:200px; margin-top:5px;'>INICIAR COMANDA</button>
                         </form>
@@ -239,7 +239,7 @@ async def abrir_avulso():
 
 
 # ==========================================
-# TELA DE LANÇAMENTO DA COMANDA (MOTO CLUBE STYLE)
+# ECRÃ DE LANÇAMENTO DA COMANDA (MOTO CLUBE STYLE)
 # ==========================================
 @app.get("/pdv/comanda/{numero_comanda}", response_class=HTMLResponse)
 async def tela_comanda_detalhe(numero_comanda: str, request: Request):
@@ -249,8 +249,9 @@ async def tela_comanda_detalhe(numero_comanda: str, request: Request):
         comanda = conn.execute(text("SELECT numero_comanda, total_conta, status FROM comandas WHERE numero_comanda = :c"), {"c": numero_comanda}).fetchone()
         if not comanda: return RedirectResponse(url="/pdv")
         
-        # Pega itens já lançados
-        itens_lançados = conn.execute(text("SELECT id, item_nome, valor FROM vendas_itens WHERE comanda_num = :c AND status = 'ABERTA' ORDER BY id DESC")), {"c": numero_comanda}).fetchall()
+        # Pega nos itens já lançados (LINHA CORRIGIDA AQUI 👇)
+        itens_lançados = conn.execute(text("SELECT id, item_nome, valor FROM vendas_itens WHERE comanda_num = :c AND status = 'ABERTA' ORDER BY id DESC"), {"c": numero_comanda}).fetchall()
+        
         html_itens = ""
         for it in itens_lançados:
             html_itens += f"""
@@ -266,7 +267,7 @@ async def tela_comanda_detalhe(numero_comanda: str, request: Request):
             </div>
             """
         
-        # Pega todos os produtos para montar a grade de cliques com ESTOQUE VISÍVEL
+        # Pega em todos os produtos para montar a grelha com ESTOQUE VISÍVEL
         produtos_db = conn.execute(text("SELECT id, nome, preco, estoque FROM produtos ORDER BY nome")).fetchall()
         html_produtos = ""
         for p in produtos_db:
@@ -324,17 +325,17 @@ async def tela_comanda_detalhe(numero_comanda: str, request: Request):
                         <select name='pagamento' class='input-padrao' style='font-size:16px; padding:12px; margin-bottom:12px;'>
                             <option value='01'>💵 DINHEIRO</option>
                             <option value='17'>💠 PIX</option>
-                            <option value='03'>💳 CARTÃO CRÉDITO</option>
-                            <option value='04'>💳 CARTÃO DÉBITO</option>
+                            <option value='03'>💳 CARTÃO DE CRÉDITO</option>
+                            <option value='04'>💳 CARTÃO DE DÉBITO</option>
                         </select>
 
                         <div style='background:#050505; padding:12px; border-radius:8px; margin-bottom:15px; border:1px solid {COR_BORDA};'>
                             <div style='display:flex; align-items:center; justify-content:space-between;'>
-                                <span style='font-weight:bold; color:{COR_VERMELHO}; font-size:14px;'>🧾 Emitir Cupom Fiscal?</span>
+                                <span style='font-weight:bold; color:{COR_VERMELHO}; font-size:14px;'>🧾 Emitir Fatura?</span>
                                 <input type='checkbox' name='nfe' value='true' onchange='document.getElementById("box-cpf-det").style.display = this.checked ? "block" : "none"' style='transform: scale(1.3); cursor: pointer;'>
                             </div>
                             <div id='box-cpf-det' style='display:none; margin-top:8px;'>
-                                <input type='text' name='cpf_nota' class='input-padrao' placeholder='CPF do Cliente (Opcional)' style='font-size:14px; padding:8px;'>
+                                <input type='text' name='cpf_nota' class='input-padrao' placeholder='NIF do Cliente (Opcional)' style='font-size:14px; padding:8px;'>
                             </div>
                         </div>
                         
@@ -390,7 +391,7 @@ async def finalizar_comanda(request: Request, comanda_num: str = Form(...), paga
         comanda = conn.execute(text("SELECT total_conta FROM comandas WHERE numero_comanda = :c AND status = 'ABERTA'"), {"c": comanda_num}).fetchone()
         if not comanda: return RedirectResponse(url="/pdv", status_code=303)
         
-        # Pega os itens para o Cupom Impresso
+        # Pega nos itens para o Recibo Impresso
         itens = conn.execute(text("SELECT item_nome, valor FROM vendas_itens WHERE comanda_num = :c AND status = 'ABERTA'"), {"c": comanda_num}).fetchall()
         
         # Atualiza Status da Comanda e dos Itens para FECHADO
@@ -405,7 +406,7 @@ async def finalizar_comanda(request: Request, comanda_num: str = Form(...), paga
         
         if nfe_solicitada:
             txt += "EMISSAO DE NFC-e SOLICITADA\n"
-            if cpf_nota: txt += f"CPF/CNPJ: {cpf_nota}\n"
+            if cpf_nota: txt += f"NIF: {cpf_nota}\n"
             
             # Módulo de Integração Fiscal da Focus NFe (Opcional se houver token configurado)
             cfg = conn.execute(text("SELECT token_focus, ambiente FROM configuracoes_nfe LIMIT 1")).fetchone()
@@ -460,11 +461,11 @@ async def tela_estoque(request: Request):
             
     add_form = f"""
     <div style='background:#0A0A0A; padding:20px; border-radius:10px; margin-bottom:20px; text-align:left; border:1px solid {COR_BORDA};'>
-        <h3>➕ CADASTRAR PRODUTO NO BAR</h3>
+        <h3>➕ REGISTAR PRODUTO NO BAR</h3>
         <form action='/novo_produto' method='post' style='display:flex; flex-wrap:wrap; gap:10px;'>
             <input name='nome' placeholder='Nome da Bebida / Patch / Item' class='input-padrao' style='flex:2; min-width:200px;' required>
             <select name='cat' class='input-padrao' style='flex:1; min-width:120px;' required>
-                <option value='BEBIDAS'>BEBIDAS GÉLIDAS</option><option value='ALIMENTOS'>PETISCOS / COZINHA</option><option value='VESTUARIO'>PATCHeS / ACESSÓRIOS</option><option value='OUTROS'>OUTROS</option>
+                <option value='BEBIDAS'>BEBIDAS</option><option value='ALIMENTOS'>PETISCOS / COZINHA</option><option value='VESTUARIO'>PATCHeS / ACESSÓRIOS</option><option value='OUTROS'>OUTROS</option>
             </select>
             <input name='preco' placeholder='Preço de Venda' step='0.01' type='number' class='input-padrao' style='width:120px;' required>
             <input name='qtd' type='number' placeholder='Qtd Estoque' class='input-padrao' style='width:100px;' required>
@@ -500,7 +501,7 @@ async def excluir_produto(request: Request):
     return RedirectResponse(url="/estoque", status_code=303)
 
 # ==========================================
-# MÓDULO 4: RELATÓRIOS E FECHAMENTO
+# MÓDULO 4: RELATÓRIOS E FECHO
 # ==========================================
 @app.get("/dashboard", response_class=HTMLResponse)
 async def dashboard(request: Request, inicio: str = "", fim: str = "", tipo_venda: str = "TODOS"):
@@ -529,8 +530,8 @@ async def dashboard(request: Request, inicio: str = "", fim: str = "", tipo_vend
     <option value='TODOS' {'selected' if tipo_venda == 'TODOS' else ''}>⚙️ TODOS OS TIPOS</option>
     <option value='DINHEIRO' {'selected' if tipo_venda == 'DINHEIRO' else ''}>💵 DINHEIRO</option>
     <option value='PIX' {'selected' if tipo_venda == 'PIX' else ''}>💠 PIX</option>
-    <option value='C. CREDITO' {'selected' if tipo_venda == 'C. CREDITO' else ''}>💳 CARTÃO CRÉDITO</option>
-    <option value='C. DEBITO' {'selected' if tipo_venda == 'C. DEBITO' else ''}>💳 CARTÃO DÉBITO</option>
+    <option value='C. CREDITO' {'selected' if tipo_venda == 'C. CREDITO' else ''}>💳 CARTÃO DE CRÉDITO</option>
+    <option value='C. DEBITO' {'selected' if tipo_venda == 'C. DEBITO' else ''}>💳 CARTÃO DE DÉBITO</option>
     """
     return f"""<html><head>{CSS}</head><body><div class='container-center'><div class='card-center' style='max-width:800px;'>
         {IMG_LOGO_PEQ}<h2>📊 Relatório Financeiro</h2>
@@ -551,7 +552,7 @@ async def dashboard(request: Request, inicio: str = "", fim: str = "", tipo_vend
     </div></div></body></html>"""
 
 # ==========================================
-# MÓDULO 5: USUÁRIOS E IMPRESSORA
+# MÓDULO 5: UTILIZADORES E IMPRESSORA
 # ==========================================
 @app.get("/usuarios", response_class=HTMLResponse)
 async def tela_usuarios(request: Request):
@@ -562,8 +563,8 @@ async def tela_usuarios(request: Request):
         for r in users_db:
             acoes = f"<form action='/excluir_usuario' method='post' style='margin:0;' onsubmit='return confirm(\"Excluir?\");'><input type='hidden' name='id' value='{r.id}'><button class='btn-acao btn-red' style='padding:8px;'>🗑️</button></form>" if r.username != "admin" else ""
             linhas += f"<tr><td>{r.username.upper()}</td><td style='color:{COR_AMARELO};'>{r.role.upper()}</td><td>{acoes}</td></tr>"
-    add_form = f"<div style='background:#0A0A0A; padding:20px; border-radius:10px; margin-bottom:20px; text-align:left; border:1px solid {COR_BORDA};'><h3>➕ NOVO OPERADOR</h3><form action='/novo_usuario' method='post' style='display:flex; flex-wrap:wrap; gap:10px;'><input name='u' placeholder='Login' class='input-padrao' style='flex:1;' required><input name='p' type='password' placeholder='Senha' class='input-padrao' style='flex:1;' required><select name='r' class='input-padrao' style='flex:1;'><option value='gerente'>GERENTE</option><option value='caixa'>CAIXA</option></select><button class='btn-acao' style='width:100%;'>CRIAR ACESSO</button></form></div>"
-    return f"<html><head>{CSS}</head><body><div class='container-center'><div class='card-center'>{IMG_LOGO_PEQ}<h2>Controle de Acesso</h2>{add_form}<div style='max-height:400px; overflow-y:auto; border:1px solid {COR_BORDA};'><table><tr><th>Login</th><th>Cargo</th><th>Ação</th></tr>{linhas}</table></div><br><a href='/central' style='color:#777'>Voltar</a></div></div></body></html>"
+    add_form = f"<div style='background:#0A0A0A; padding:20px; border-radius:10px; margin-bottom:20px; text-align:left; border:1px solid {COR_BORDA};'><h3>➕ NOVO OPERADOR</h3><form action='/novo_usuario' method='post' style='display:flex; flex-wrap:wrap; gap:10px;'><input name='u' placeholder='Login' class='input-padrao' style='flex:1;' required><input name='p' type='password' placeholder='Palavra-passe' class='input-padrao' style='flex:1;' required><select name='r' class='input-padrao' style='flex:1;'><option value='gerente'>GERENTE</option><option value='caixa'>CAIXA</option></select><button class='btn-acao' style='width:100%;'>CRIAR ACESSO</button></form></div>"
+    return f"<html><head>{CSS}</head><body><div class='container-center'><div class='card-center'>{IMG_LOGO_PEQ}<h2>Controlo de Acessos</h2>{add_form}<div style='max-height:400px; overflow-y:auto; border:1px solid {COR_BORDA};'><table><tr><th>Login</th><th>Cargo</th><th>Ação</th></tr>{linhas}</table></div><br><a href='/central' style='color:#777'>Voltar</a></div></div></body></html>"
 
 @app.post("/novo_usuario")
 async def novo_usuario(request: Request):
@@ -613,7 +614,7 @@ def imprimir_ticket(texto):
         win32print.EndPagePrinter(hPrinter)
         win32print.EndDocPrinter(hPrinter)
         win32print.ClosePrinter(hPrinter)
-        print("✔️ Cupom Impresso!")
+        print("✔️ Recibo Impresso!")
     except Exception as e:
         print(f"❌ Erro: {{e}}")
 
