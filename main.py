@@ -43,7 +43,7 @@ except Exception: pass
 try:
     with engine.begin() as conn:
         conn.execute(text("INSERT INTO usuarios (username, password, role) VALUES ('admin', '1234', 'admin') ON CONFLICT (username) DO NOTHING"))
-        cfg_exist = conn.execute(text("SELECT id FROM configuracoes_nfe LIMIT 1")).fetchone()
+        cfg_exist = conn.execute(text("SELECT id FROM configuracoes_nfe LIMIT 1")).fetchonefetchone()
         if not cfg_exist:
             conn.execute(text("INSERT INTO configuracoes_nfe (token_focus, ambiente) VALUES ('', 'HOMOLOGACAO')"))
 except Exception: pass
@@ -376,7 +376,7 @@ async def finalizar_comanda(request: Request, comanda_num: str = Form(...), paga
 
 
 # ==========================================
-# MÓDULO 3: CONFIGURAÇÃO DE ESTOQUE
+# MÓDULO 3: GESTÃO DE ESTOQUE COM EDIÇÃO
 # ==========================================
 @app.get("/estoque", response_class=HTMLResponse)
 async def tela_estoque(request: Request):
@@ -385,14 +385,76 @@ async def tela_estoque(request: Request):
     with engine.connect() as conn:
         prods_db = conn.execute(text("SELECT id, nome, categoria, preco, estoque FROM produtos ORDER BY nome")).fetchall()
         for r in prods_db:
-            acoes = f"<div style='display:flex; gap:5px;'><form action='/att_estoque' method='post' style='margin:0; display:flex;'><input type='hidden' name='id' value='{r.id}'><input type='number' name='q' class='input-padrao' style='width:60px; padding:5px; margin:0; text-align:center;' placeholder='+Qtd' required><button class='btn-acao' style='padding:8px; margin:0;'>➕</button></form><form action='/excluir_produto' method='post' style='margin:0;' onsubmit='return confirm(\"Excluir item?\");'><input type='hidden' name='id' value='{r.id}'><button class='btn-acao btn-red' style='padding:8px; margin:0;'>🗑️</button></form></div>"
+            nome_seguro = r.nome.replace('"', '').replace("'", "")
+            acoes = f"""
+            <div style='display:flex; gap:5px;'>
+                <form action='/att_estoque' method='post' style='margin:0; display:flex;'>
+                    <input type='hidden' name='id' value='{r.id}'>
+                    <input type='number' name='q' class='input-padrao' style='width:60px; padding:5px; margin:0; text-align:center;' placeholder='+Qtd' required>
+                    <button class='btn-acao' style='padding:8px; margin:0;' title='Adicionar Estoque'>➕</button>
+                </form>
+                <button type='button' class='btn-acao btn-dark' style='padding:8px; margin:0;' onclick='abrirModal({r.id}, "{nome_seguro}", "{r.categoria}", {float(r.preco or 0)})' title='Editar Produto'>✏️</button>
+                <form action='/excluir_produto' method='post' style='margin:0;' onsubmit='return confirm(\"Excluir item?\");'>
+                    <input type='hidden' name='id' value='{r.id}'>
+                    <button class='btn-acao btn-red' style='padding:8px; margin:0;' title='Excluir Produto'>🗑️</button>
+                </form>
+            </div>
+            """
             linhas += f"<tr><td style='color:#FFF; font-weight:bold;'>{r.nome.upper()}</td><td style='color:{COR_AMARELO}; font-weight:bold;'>R$ {float(r.preco or 0):.2f}</td><td style='color:#FFF; font-weight:bold; font-size:18px; text-align:center;'>{int(r.estoque or 0)} un</td><td>{acoes}</td></tr>"
             
     add_form = f"<div style='background:#0A0A0A; padding:20px; border-radius:10px; margin-bottom:20px; text-align:left; border:1px solid {COR_BORDA};'><h3>➕ CADASTRAR PRODUTO NO BAR</h3><form action='/novo_produto' method='post' style='display:flex; flex-wrap:wrap; gap:10px;'><input name='nome' placeholder='Nome da Bebida / Patch / Item' class='input-padrao' style='flex:2; min-width:200px;' required><select name='cat' class='input-padrao' style='flex:1; min-width:120px;' required><option value='BEBIDAS'>BEBIDAS GÉLIDAS</option><option value='ALIMENTOS'>PETISCOS / COZINHA</option><option value='VESTUARIO'>PATCHES / ACESSÓRIOS</option><option value='OUTROS'>OUTROS</option></select><input name='preco' placeholder='Preço de Venda' step='0.01' type='number' class='input-padrao' style='width:120px;' required><input name='qtd' type='number' placeholder='Qtd Estoque' class='input-padrao' style='width:100px;' required><button class='btn-acao' style='width:100%; font-size:18px;'>SALVAR NO ESTOQUE</button></form></div>"
-    return f"<html><head>{CSS}</head><body><div class='container-center'><div class='card-center' style='max-width:800px;'>{IMG_LOGO_PEQ}<h2>📦 Gestão de Estoque</h2>{add_form}<div style='max-height:400px; overflow-y:auto; border:1px solid {COR_BORDA};'><table><tr><th>Produto</th><th>Preço</th><th>Qtd Atual</th><th>Ações</th></tr>{linhas}</table></div><br><a href='/central' style='color:#777'>Voltar</a></div></div></body></html>"
+    
+    # HTML DO MODAL DE EDIÇÃO
+    modal_edit = f"""
+    <div id='editModal' style='display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.8); z-index:1000; align-items:center; justify-content:center;'>
+        <div class='card-center' style='position:relative; width:90%; max-width:400px; padding:20px; background:#121214; border:1px solid {COR_BORDA}; text-align:left;'>
+            <span onclick='fecharModal()' style='position:absolute; top:10px; right:15px; cursor:pointer; font-size:24px; color:#FFF;'>&times;</span>
+            <h3 style='margin-top:0; color:{COR_AMARELO};'>✏️ EDITAR PRODUTO</h3>
+            <form action='/editar_produto' method='post' style='display:flex; flex-direction:column; gap:10px;'>
+                <input type='hidden' name='id' id='edit_id'>
+                <div>
+                    <label style='font-size:12px; color:#aaa; font-weight:bold;'>NOME DO PRODUTO:</label>
+                    <input name='nome' id='edit_nome' class='input-padrao' required autocomplete='off'>
+                </div>
+                <div>
+                    <label style='font-size:12px; color:#aaa; font-weight:bold;'>CATEGORIA:</label>
+                    <select name='cat' id='edit_cat' class='input-padrao' required>
+                        <option value='BEBIDAS'>BEBIDAS GÉLIDAS</option>
+                        <option value='ALIMENTOS'>PETISCOS / COZINHA</option>
+                        <option value='VESTUARIO'>PATCHES / ACESSÓRIOS</option>
+                        <option value='OUTROS'>OUTROS</option>
+                    </select>
+                </div>
+                <div>
+                    <label style='font-size:12px; color:#aaa; font-weight:bold;'>NOVO PREÇO (R$):</label>
+                    <input name='preco' id='edit_preco' type='number' step='0.01' class='input-padrao' required>
+                </div>
+                <button class='btn-acao' style='margin-top:10px; font-size:16px;'>SALVAR ALTERAÇÕES</button>
+            </form>
+        </div>
+    </div>
+    """
+
+    js_modal = """
+    <script>
+        function abrirModal(id, nome, cat, preco) {
+            document.getElementById('edit_id').value = id;
+            document.getElementById('edit_nome').value = nome;
+            document.getElementById('edit_cat').value = cat;
+            document.getElementById('edit_preco').value = preco;
+            document.getElementById('editModal').style.display = 'flex';
+        }
+        function fecharModal() {
+            document.getElementById('editModal').style.display = 'none';
+        }
+    </script>
+    """
+
+    return f"<html><head>{CSS}{js_modal}</head><body>{modal_edit}<div class='container-center'><div class='card-center' style='max-width:800px;'>{IMG_LOGO_PEQ}<h2>📦 Gestão de Estoque</h2>{add_form}<div style='max-height:400px; overflow-y:auto; border:1px solid {COR_BORDA};'><table><tr><th>Produto</th><th>Preço</th><th>Qtd Atual</th><th>Ações</th></tr>{linhas}</table></div><br><a href='/central' class='btn-acao btn-dark' style='width:200px; margin:auto;'>Voltar ao Menu</a></div></div></body></html>"
 
 @app.post("/novo_produto")
 async def novo_produto(request: Request):
+    if request.session.get("role") not in ["admin", "gerente"]: return RedirectResponse(url="/central")
     f = await request.form()
     nome_prod = f.get("nome").strip().upper()
     try:
@@ -403,14 +465,26 @@ async def novo_produto(request: Request):
 
 @app.post("/att_estoque")
 async def att_estoque(request: Request):
+    if request.session.get("role") not in ["admin", "gerente"]: return RedirectResponse(url="/central")
     f = await request.form()
     try:
         with engine.begin() as conn: conn.execute(text("UPDATE produtos SET estoque = COALESCE(estoque, 0) + :q WHERE id = :id"), {"id": f.get("id"), "q": int(f.get("q", "0"))})
     except: pass
     return RedirectResponse(url="/estoque", status_code=303)
 
+@app.post("/editar_produto")
+async def editar_produto(request: Request):
+    if request.session.get("role") not in ["admin", "gerente"]: return RedirectResponse(url="/central")
+    f = await request.form()
+    try:
+        with engine.begin() as conn: 
+            conn.execute(text("UPDATE produtos SET nome = :n, categoria = :c, preco = :p WHERE id = :id"), {"n": f.get("nome").strip().upper(), "c": f.get("cat"), "p": float(f.get("preco").replace(",", ".")), "id": f.get("id")})
+    except Exception: pass
+    return RedirectResponse(url="/estoque", status_code=303)
+
 @app.post("/excluir_produto")
 async def excluir_produto(request: Request):
+    if request.session.get("role") not in ["admin", "gerente"]: return RedirectResponse(url="/central")
     f = await request.form()
     try:
         with engine.begin() as conn: conn.execute(text("DELETE FROM produtos WHERE id = :id"), {"id": f.get("id")})
