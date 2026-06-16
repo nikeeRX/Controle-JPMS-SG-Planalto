@@ -26,7 +26,7 @@ with engine.begin() as conn:
     conn.execute(text("""
         CREATE TABLE IF NOT EXISTS usuarios (id SERIAL PRIMARY KEY, username TEXT UNIQUE NOT NULL, password TEXT NOT NULL, role TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS produtos (id SERIAL PRIMARY KEY, codigo_barras TEXT UNIQUE, nome TEXT NOT NULL, categoria TEXT DEFAULT 'OUTROS', preco DECIMAL(10,2) DEFAULT 0.00, estoque INT DEFAULT 0);
-        CREATE TABLE IF NOT EXISTS comandas (id SERIAL PRIMARY KEY, numero_comanda TEXT UNIQUE NOT NULL, total_conta DECIMAL(10,2) DEFAULT 0.00, status TEXT DEFAULT 'ABERTA', forma_pagamento TEXT, data_fechamento TIMESTAMP DEFAULT CURRENT_TIMESTAMP, nfe_solicitada BOOLEAN DEFAULT FALSE, cpf_nota TEXT);
+        CREATE TABLE IF NOT EXISTS comandas (id SERIAL PRIMARY KEY, numero_comanda TEXT NOT NULL, total_conta DECIMAL(10,2) DEFAULT 0.00, status TEXT DEFAULT 'ABERTA', forma_pagamento TEXT, data_fechamento TIMESTAMP DEFAULT CURRENT_TIMESTAMP, nfe_solicitada BOOLEAN DEFAULT FALSE, cpf_nota TEXT);
         CREATE TABLE IF NOT EXISTS vendas_itens (id SERIAL PRIMARY KEY, comanda_num TEXT, item_nome TEXT, valor DECIMAL(10,2), data_venda DATE DEFAULT CURRENT_DATE, hora_venda TIME DEFAULT CURRENT_TIME, status TEXT DEFAULT 'ABERTA');
         CREATE TABLE IF NOT EXISTS fila_impressao (id SERIAL PRIMARY KEY, conteudo TEXT, status TEXT DEFAULT 'PENDENTE', data_criacao TIMESTAMP DEFAULT CURRENT_TIMESTAMP);
         CREATE TABLE IF NOT EXISTS historico_estoque (id SERIAL PRIMARY KEY, produto_nome TEXT, qtd_adicionada INT, data_entrada DATE DEFAULT CURRENT_DATE);
@@ -156,7 +156,7 @@ async def central(request: Request):
 
 
 # ==========================================
-# PAINEL DE COMANDAS COM FILTRO LIVE POR DIGITAÇÃO
+# PAINEL DE COMANDAS COM FILTRO LIVE POR DIGITAÇÃO E CORREÇÃO DO BANCO
 # ==========================================
 @app.get("/pdv", response_class=HTMLResponse)
 async def pdv_painel(request: Request):
@@ -164,7 +164,7 @@ async def pdv_painel(request: Request):
     
     linhas_comandas = ""
     with engine.connect() as conn:
-        comandas_abertas = conn.execute(text("SELECT numero_comanda, total_conta FROM comandas WHERE status = 'ABERTA' ORDER BY numero_comanda")).fetchall()
+        comandas_abertas = conn.execute(text("SELECT numero_comanda, total_conta FROM comandas WHERE status = 'ABERTA' ORDER BY id DESC")).fetchall()
         for c in comandas_abertas:
             linhas_comandas += f"""
             <div class='card-comanda-item' data-nome='{c.numero_comanda}' style='background:{COR_INPUT}; border:1px solid {COR_BORDA}; border-radius:8px; padding:15px; display:flex; justify-content:space-between; align-items:center;'>
@@ -182,12 +182,12 @@ async def pdv_painel(request: Request):
     if not linhas_comandas:
         linhas_comandas = "<p id='sem-comandas' style='color:#555; grid-column: 1/-1; text-align:center;'>Nenhuma comanda aberta no momento. Clique acima para iniciar.</p>"
 
-    # Script JS de filtro inteligente por digitação
+    # Script JS de filtro inteligente por digitação corrigido (usando trim() ao invés de strip())
     js_busca = """
     <script>
         function filtrarComandas() {
             let input = document.getElementById('busca-comanda');
-            let filter = input.value.toLowerCase().strip ? input.value.toLowerCase().strip() : input.value.toLowerCase();
+            let filter = input.value.toLowerCase().trim();
             let container = document.getElementById('lista-comandas-grid');
             let items = container.getElementsByClassName('card-comanda-item');
             
@@ -203,67 +203,30 @@ async def pdv_painel(request: Request):
     </script>
     """
 
-    return f"""<html><head>{CSS}{js_busca}</head>
-    <body style='background:{COR_FUNDO}; overflow-y:auto;'>
-        <div class='container-center' style='height:auto; padding:40px 20px;'>
-            <div class='card-center' style='max-width:900px;'>
-                {IMG_LOGO_PEQ}
-                <h2>🛒 Controle de Vendas</h2>
-                
-                <div style='background:#0A0A0A; padding:20px; border-radius:10px; border:1px solid {COR_BORDA}; margin-bottom:25px;'>
-                    <h3 style='margin-bottom:15px;'>⚡ GERENCIAR ATENDIMENTO</h3>
-                    <div style='display:flex; gap:15px; flex-wrap:wrap;'>
-                        <button class='btn-acao' style='flex:1; font-size:18px; padding:20px;' onclick='document.getElementById("box-comanda").style.display="block";'>📋 ABRIR COMANDA</button>
-                        <form action='/pdv/abrir_avulso' method='post' style='flex:1; margin:0;'>
-                            <button class='btn-acao btn-dark' style='width:100%; font-size:18px; padding:20px;'>🛒 VENDA AVULSA</button>
-                        </form>
-                    </div>
-                    
-                    <div id='box-comanda' style='display:none; margin-top:20px; border-top:1px dashed {COR_BORDA}; padding-top:15px;'>
-                        <form action='/pdv/abrir_comanda' method='post'>
-                            <label style='font-size:14px; color:#AAA;'>Identificação da Comanda (Nome do Irmão ou Nº):</label>
-                            <input class='input-padrao' name='nome_comanda' placeholder='Ex: Pará, Mesa 3, Comanda 12...' required autocomplete='off'>
-                            <button class='btn-acao' style='width:200px; margin-top:5px;'>INICIAR COMANDA</button>
-                        </form>
-                    </div>
-                </div>
-
-                <div style='margin-bottom: 15px; text-align: left;'>
-                    <label style='font-size: 12px; color: #777; font-weight: bold;'>🔍 BUSCAR COMANDA ATIVA:</label>
-                    <input type='text' id='busca-comanda' oninput='filtrarComandas()' class='input-padrao' placeholder='Comece a digitar o nome da comanda...' autocomplete='off'>
-                </div>
-
-                <h3>📋 Comandas Ativas no Painel</h3>
-                <div id='lista-comandas-grid' style='display:grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap:15px; text-align:left; margin-top:15px;'>
-                    {linhas_comandas}
-                </div>
-                
-                <br><br>
-                <a href='/central' class='btn-acao btn-dark' style='width:150px; margin:auto;'>Voltar ao Menu</a>
-            </div>
-        </div>
-    </body></html>"""
+    return f"<html><head>{CSS}{js_busca}</head><body style='background:{COR_FUNDO}; overflow-y:auto;'><div class='container-center' style='height:auto; padding:40px 20px;'><div class='card-center' style='max-width:900px;'>{IMG_LOGO_PEQ}<h2>🛒 Controle de Vendas</h2><div style='background:#0A0A0A; padding:20px; border-radius:10px; border:1px solid {COR_BORDA}; margin-bottom:25px;'><h3 style='margin-bottom:15px;'>⚡ GERENCIAR ATENDIMENTO</h3><div style='display:flex; gap:15px; flex-wrap:wrap;'><button class='btn-acao' style='flex:1; font-size:18px; padding:20px;' onclick='document.getElementById(\"box-comanda\").style.display=\"block\";'>📋 ABRIR COMANDA</button><form action='/pdv/abrir_avulso' method='post' style='flex:1; margin:0;'><button class='btn-acao btn-dark' style='width:100%; font-size:18px; padding:20px;'>🛒 VENDA AVULSA</button></form></div><div id='box-comanda' style='display:none; margin-top:20px; border-top:1px dashed {COR_BORDA}; padding-top:15px;'><form action='/pdv/abrir_comanda' method='post'><label style='font-size:14px; color:#AAA;'>Identificação da Comanda (Nome do Irmão ou Nº):</label><input class='input-padrao' name='nome_comanda' placeholder='Ex: Pará, Mesa 3, Comanda 12...' required autocomplete='off'><button class='btn-acao' style='width:200px; margin-top:5px;'>INICIAR COMANDA</button></form></div></div><div style='margin-bottom: 15px; text-align: left;'><label style='font-size: 12px; color: #777; font-weight: bold;'>🔍 BUSCAR COMANDA ATIVA:</label><input type='text' id='busca-comanda' oninput='filtrarComandas()' class='input-padrao' placeholder='Comece a digitar o nome da comanda...' autocomplete='off'></div><h3>📋 Comandas Ativas no Painel</h3><div id='lista-comandas-grid' style='display:grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap:15px; text-align:left; margin-top:15px;'>{linhas_comandas}</div><br><br><a href='/central' class='btn-acao btn-dark' style='width:150px; margin:auto;'>Voltar ao Menu</a></div></div></body></html>"
 
 @app.post("/pdv/abrir_comanda")
 async def abrir_comanda(nome_comanda: str = Form(...)):
     nome_limpo = nome_comanda.strip().replace("/", "-")
     try:
         with engine.begin() as conn:
-            # Força o status para ABERTA e zera saldo se a comanda antiga com mesmo nome já tiver sido FECHADA
-            conn.execute(text("""
-                INSERT INTO comandas (numero_comanda, total_conta, status) 
-                VALUES (:c, 0.00, 'ABERTA') 
-                ON CONFLICT (numero_comanda) 
-                DO UPDATE SET status = 'ABERTA', total_conta = 0.00 WHERE comandas.status = 'FECHADA'
-            """), {"c": nome_limpo})
-    except Exception: pass
+            # 1. Verifica se já existe uma comanda com esse nome ABERTA no momento.
+            existe = conn.execute(text("SELECT id FROM comandas WHERE numero_comanda = :c AND status = 'ABERTA' LIMIT 1"), {"c": nome_limpo}).fetchone()
+            
+            # 2. Se NÃO EXISTE uma aberta, criamos uma nova do zero.
+            if not existe:
+                conn.execute(text("INSERT INTO comandas (numero_comanda, total_conta, status) VALUES (:c, 0.00, 'ABERTA')"), {"c": nome_limpo})
+    except Exception as e:
+        print(f"Erro no banco: {e}")
     return RedirectResponse(url=f"/pdv/comanda/{urllib.parse.quote(nome_limpo)}", status_code=303)
 
 @app.post("/pdv/abrir_avulso")
 async def abrir_avulso():
     id_avulso = "AVULSO-" + datetime.now().strftime("%H%M%S")
-    with engine.begin() as conn:
-        conn.execute(text("INSERT INTO comandas (numero_comanda, total_conta, status) VALUES (:c, 0.00, 'ABERTA')"), {"c": id_avulso})
+    try:
+        with engine.begin() as conn:
+            conn.execute(text("INSERT INTO comandas (numero_comanda, total_conta, status) VALUES (:c, 0.00, 'ABERTA')"), {"c": id_avulso})
+    except: pass
     return RedirectResponse(url=f"/pdv/comanda/{id_avulso}", status_code=303)
 
 
@@ -275,7 +238,7 @@ async def tela_comanda_detalhe(numero_comanda: str, request: Request):
     if not request.session.get("user"): return RedirectResponse(url="/")
     
     with engine.connect() as conn:
-        comanda = conn.execute(text("SELECT numero_comanda, total_conta, status FROM comandas WHERE numero_comanda = :c"), {"c": numero_comanda}).fetchone()
+        comanda = conn.execute(text("SELECT numero_comanda, total_conta, status FROM comandas WHERE numero_comanda = :c AND status = 'ABERTA' ORDER BY id DESC LIMIT 1"), {"c": numero_comanda}).fetchone()
         if not comanda: return RedirectResponse(url="/pdv")
         
         itens_lançados = conn.execute(text("SELECT id, item_nome, valor FROM vendas_itens WHERE comanda_num = :c AND status = 'ABERTA' ORDER BY id DESC"), {"c": numero_comanda}).fetchall()
@@ -319,60 +282,7 @@ async def tela_comanda_detalhe(numero_comanda: str, request: Request):
     </script>
     """
 
-    return f"""<html><head>{CSS}{js_inject}</head>
-    <body style='background:{COR_FUNDO};'>
-        <div style='display:flex; height:100vh; width:100%; overflow:hidden;'>
-            
-            <div style='flex:1.3; padding:20px; display:flex; flex-direction:column; background:{COR_CARD}; border-right:2px solid {COR_BORDA}; overflow-y:auto;'>
-                <h2>🍺 Selecione os Itens</h2>
-                <div class='grid-produtos'>
-                    {html_produtos}
-                </div>
-            </div>
-            
-            <div style='flex:1; padding:20px; display:flex; flex-direction:column; justify-content:space-between; background:#080808; overflow-y:auto;'>
-                <div>
-                    <h2 style='color:#FFF; margin-bottom:5px;'>📋 {comanda.numero_comanda.upper()}</h2>
-                    <span style='color:#666;'>Consumo acumulado da conta</span>
-                    
-                    <div style='background:#000; border:1px solid {COR_BORDA}; border-radius:8px; padding:10px; margin-top:15px; max-height:220px; overflow-y:auto;'>
-                        {html_itens if html_itens else '<p style="color:#444; text-align:center;">Nenhum item lançado ainda.</p>'}
-                    </div>
-                </div>
-                
-                <div style='background:#111; padding:20px; border-radius:8px; margin-top:20px; border:1px solid {COR_BORDA};'>
-                    <div style='color:#888; font-size:14px; text-transform:uppercase;'>TOTAL DA CONTA</div>
-                    <div style='color:{COR_AMARELO}; font-size:40px; font-weight:bold; margin-bottom:15px;'>R$ {float(comanda.total_conta or 0):.2f}</div>
-                    
-                    <form action='/pdv/finalizar_comanda' method='post'>
-                        <input type='hidden' name='comanda_num' value='{comanda.numero_comanda}'>
-                        
-                        <label style='font-size:12px; color:#aaa;'>FORMA DE PAGAMENTO:</label>
-                        <select name='pagamento' class='input-padrao' style='font-size:16px; padding:12px; margin-bottom:12px;'>
-                            <option value='01'>💵 DINHEIRO</option>
-                            <option value='17'>💠 PIX</option>
-                            <option value='03'>💳 CARTÃO CRÉDITO</option>
-                            <option value='04'>💳 CARTÃO DÉBITO</option>
-                        </select>
-
-                        <div style='background:#050505; padding:12px; border-radius:8px; margin-bottom:15px; border:1px solid {COR_BORDA};'>
-                            <div style='display:flex; align-items:center; justify-content:space-between;'>
-                                <span style='font-weight:bold; color:{COR_VERMELHO}; font-size:14px;'>🧾 Emitir Cupom Fiscal?</span>
-                                <input type='checkbox' name='nfe' value='true' onchange='document.getElementById("box-cpf-det").style.display = this.checked ? "block" : "none"' style='transform: scale(1.3); cursor: pointer;'>
-                            </div>
-                            <div id='box-cpf-det' style='display:none; margin-top:8px;'>
-                                <input type='text' name='cpf_nota' class='input-padrao' placeholder='CPF do Cliente (Opcional)' style='font-size:14px; padding:8px;'>
-                            </div>
-                        </div>
-                        
-                        <button class='btn-acao' style='font-size:18px; padding:15px;'>🏁 FECHAR CONTA E IMPRIMIR</button>
-                    </form>
-                    <a href='/pdv' class='btn-acao btn-dark' style='margin-top:5px; padding:10px; font-size:12px;'>⬅️ VOLTAR AO PAINEL</a>
-                </div>
-                
-            </div>
-        </div>
-    </body></html>"""
+    return f"<html><head>{CSS}{js_inject}</head><body style='background:{COR_FUNDO};'><div style='display:flex; height:100vh; width:100%; overflow:hidden;'><div style='flex:1.3; padding:20px; display:flex; flex-direction:column; background:{COR_CARD}; border-right:2px solid {COR_BORDA}; overflow-y:auto;'><h2>🍺 Selecione os Itens</h2><div class='grid-produtos'>{html_produtos}</div></div><div style='flex:1; padding:20px; display:flex; flex-direction:column; justify-content:space-between; background:#080808; overflow-y:auto;'><div><h2 style='color:#FFF; margin-bottom:5px;'>📋 {comanda.numero_comanda.upper()}</h2><span style='color:#666;'>Consumo acumulado da conta</span><div style='background:#000; border:1px solid {COR_BORDA}; border-radius:8px; padding:10px; margin-top:15px; max-height:220px; overflow-y:auto;'>{html_itens if html_itens else '<p style=\"color:#444; text-align:center;\">Nenhum item lançado ainda.</p>'}</div></div><div style='background:#111; padding:20px; border-radius:8px; margin-top:20px; border:1px solid {COR_BORDA};'><div style='color:#888; font-size:14px; text-transform:uppercase;'>TOTAL DA CONTA</div><div style='color:{COR_AMARELO}; font-size:40px; font-weight:bold; margin-bottom:15px;'>R$ {float(comanda.total_conta or 0):.2f}</div><form action='/pdv/finalizar_comanda' method='post'><input type='hidden' name='comanda_num' value='{comanda.numero_comanda}'><label style='font-size:12px; color:#aaa;'>FORMA DE PAGAMENTO:</label><select name='pagamento' class='input-padrao' style='font-size:16px; padding:12px; margin-bottom:12px;'><option value='01'>💵 DINHEIRO</option><option value='17'>💠 PIX</option><option value='03'>💳 CARTÃO CRÉDITO</option><option value='04'>💳 CARTÃO DÉBITO</option></select><div style='background:#050505; padding:12px; border-radius:8px; margin-bottom:15px; border:1px solid {COR_BORDA};'><div style='display:flex; align-items:center; justify-content:space-between;'><span style='font-weight:bold; color:{COR_VERMELHO}; font-size:14px;'>🧾 Emitir Cupom Fiscal?</span><input type='checkbox' name='nfe' value='true' onchange='document.getElementById(\"box-cpf-det\").style.display = this.checked ? \"block\" : \"none\"' style='transform: scale(1.3); cursor: pointer;'></div><div id='box-cpf-det' style='display:none; margin-top:8px;'><input type='text' name='cpf_nota' class='input-padrao' placeholder='CPF do Cliente (Opcional)' style='font-size:14px; padding:8px;'></div></div><button class='btn-acao' style='font-size:18px; padding:15px;'>🏁 FECHAR CONTA E IMPRIMIR</button></form><a href='/pdv' class='btn-acao btn-dark' style='margin-top:5px; padding:10px; font-size:12px;'>⬅️ VOLTAR AO PAINEL</a></div></div></div></body></html>"
 
 
 # ==========================================
@@ -384,7 +294,7 @@ async def pdv_adicionar_item(comanda_num: str = Form(...), produto_id: int = For
         prod = conn.execute(text("SELECT nome, preco FROM produtos WHERE id = :id"), {"id": produto_id}).fetchone()
         if prod:
             conn.execute(text("INSERT INTO vendas_itens (comanda_num, item_nome, valor, status) VALUES (:c, :n, :v, 'ABERTA')"), {"c": comanda_num, "n": prod.nome, "v": prod.preco})
-            conn.execute(text("UPDATE comandas SET total_conta = total_conta + :v WHERE numero_comanda = :c"), {"v": prod.preco, "c": comanda_num})
+            conn.execute(text("UPDATE comandas SET total_conta = total_conta + :v WHERE numero_comanda = :c AND status = 'ABERTA'"), {"v": prod.preco, "c": comanda_num})
             conn.execute(text("UPDATE produtos SET estoque = GREATEST(estoque - 1, 0) WHERE id = :id"), {"id": produto_id})
             
     return RedirectResponse(url=f"/pdv/comanda/{urllib.parse.quote(comanda_num)}", status_code=303)
@@ -394,7 +304,7 @@ async def pdv_remover_item(item_id: int = Form(...), num_comanda: str = Form(...
     with engine.begin() as conn:
         item = conn.execute(text("SELECT item_nome, valor FROM vendas_itens WHERE id = :id"), {"id": item_id}).fetchone()
         if item:
-            conn.execute(text("UPDATE comandas SET total_conta = GREATEST(total_conta - :v, 0.00) WHERE numero_comanda = :c"), {"v": item.valor, "c": num_comanda})
+            conn.execute(text("UPDATE comandas SET total_conta = GREATEST(total_conta - :v, 0.00) WHERE numero_comanda = :c AND status = 'ABERTA'"), {"v": item.valor, "c": num_comanda})
             conn.execute(text("DELETE FROM vendas_itens WHERE id = :id"), {"id": item_id})
             conn.execute(text("UPDATE produtos SET estoque = estoque + 1 WHERE nome = :n"), {"n": item.item_nome})
             
@@ -408,13 +318,13 @@ async def finalizar_comanda(request: Request, comanda_num: str = Form(...), paga
     usuario = request.session.get("user", "Caixa")
     
     with engine.begin() as conn:
-        comanda = conn.execute(text("SELECT total_conta FROM comandas WHERE numero_comanda = :c AND status = 'ABERTA'"), {"c": comanda_num}).fetchone()
+        comanda = conn.execute(text("SELECT total_conta FROM comandas WHERE numero_comanda = :c AND status = 'ABERTA' ORDER BY id DESC LIMIT 1"), {"c": comanda_num}).fetchone()
         if not comanda: return RedirectResponse(url="/pdv", status_code=303)
         
         itens = conn.execute(text("SELECT item_nome, valor FROM vendas_itens WHERE comanda_num = :c AND status = 'ABERTA'"), {"c": comanda_num}).fetchall()
         
-        conn.execute(text("UPDATE comandas SET status = 'FECHADA', forma_pagamento = :p, nfe_solicitada = :nfe, cpf_nota = :cpf, data_fechamento = CURRENT_TIMESTAMP WHERE numero_comanda = :c"), {"p": nome_pagamento, "nfe": nfe_solicitada, "cpf": cpf_nota, "c": comanda_num})
-        conn.execute(text("UPDATE vendas_itens SET status = 'FECHADA' WHERE comanda_num = :c"), {"c": comanda_num})
+        conn.execute(text("UPDATE comandas SET status = 'FECHADA', forma_pagamento = :p, nfe_solicitada = :nfe, cpf_nota = :cpf, data_fechamento = CURRENT_TIMESTAMP WHERE numero_comanda = :c AND status = 'ABERTA'"), {"p": nome_pagamento, "nfe": nfe_solicitada, "cpf": cpf_nota, "c": comanda_num})
+        conn.execute(text("UPDATE vendas_itens SET status = 'FECHADA' WHERE comanda_num = :c AND status = 'ABERTA'"), {"c": comanda_num})
         
         txt = f"--------------------------------\n   STEEL GOOSE MOTO GROUP\nPLANALTO-DF\n--------------------------------\nCOMANDA: {comanda_num.upper()}\nOPERADOR: {usuario.upper()}\nDATA: {datetime.now().strftime('%d/%m/%Y %H:%M')}\n--------------------------------\n"
         for idx, item in enumerate(itens):
@@ -463,7 +373,7 @@ async def finalizar_comanda(request: Request, comanda_num: str = Form(...), paga
 
 
 # ==========================================
-# MÓDULO 3: GESTÃO DE ESTOQUE
+# MÓDULO 3: CONFIGURAÇÃO DE ESTOQUE
 # ==========================================
 @app.get("/estoque", response_class=HTMLResponse)
 async def tela_estoque(request: Request):
@@ -475,19 +385,7 @@ async def tela_estoque(request: Request):
             acoes = f"<div style='display:flex; gap:5px;'><form action='/att_estoque' method='post' style='margin:0; display:flex;'><input type='hidden' name='id' value='{r.id}'><input type='number' name='q' class='input-padrao' style='width:60px; padding:5px; margin:0; text-align:center;' placeholder='+Qtd' required><button class='btn-acao' style='padding:8px; margin:0;'>➕</button></form><form action='/excluir_produto' method='post' style='margin:0;' onsubmit='return confirm(\"Excluir item?\");'><input type='hidden' name='id' value='{r.id}'><button class='btn-acao btn-red' style='padding:8px; margin:0;'>🗑️</button></form></div>"
             linhas += f"<tr><td style='color:#FFF; font-weight:bold;'>{r.nome.upper()}</td><td style='color:{COR_AMARELO}; font-weight:bold;'>R$ {float(r.preco or 0):.2f}</td><td style='color:#FFF; font-weight:bold; font-size:18px; text-align:center;'>{int(r.estoque or 0)} un</td><td>{acoes}</td></tr>"
             
-    add_form = f"""
-    <div style='background:#0A0A0A; padding:20px; border-radius:10px; margin-bottom:20px; text-align:left; border:1px solid {COR_BORDA};'>
-        <h3>➕ CADASTRAR PRODUTO NO BAR</h3>
-        <form action='/novo_produto' method='post' style='display:flex; flex-wrap:wrap; gap:10px;'>
-            <input name='nome' placeholder='Nome da Bebida / Patch / Item' class='input-padrao' style='flex:2; min-width:200px;' required>
-            <select name='cat' class='input-padrao' style='flex:1; min-width:120px;' required>
-                <option value='BEBIDAS'>BEBIDAS GÉLIDAS</option><option value='ALIMENTOS'>PETISCOS / COZINHA</option><option value='VESTUARIO'>PATCHES / ACESSÓRIOS</option><option value='OUTROS'>OUTROS</option>
-            </select>
-            <input name='preco' placeholder='Preço de Venda' step='0.01' type='number' class='input-padrao' style='width:120px;' required>
-            <input name='qtd' type='number' placeholder='Qtd Estoque' class='input-padrao' style='width:100px;' required>
-            <button class='btn-acao' style='width:100%; font-size:18px;'>SALVAR NO ESTOQUE</button>
-        </form>
-    </div>"""
+    add_form = f"<div style='background:#0A0A0A; padding:20px; border-radius:10px; margin-bottom:20px; text-align:left; border:1px solid {COR_BORDA};'><h3>➕ CADASTRAR PRODUTO NO BAR</h3><form action='/novo_produto' method='post' style='display:flex; flex-wrap:wrap; gap:10px;'><input name='nome' placeholder='Nome da Bebida / Patch / Item' class='input-padrao' style='flex:2; min-width:200px;' required><select name='cat' class='input-padrao' style='flex:1; min-width:120px;' required><option value='BEBIDAS'>BEBIDAS GÉLIDAS</option><option value='ALIMENTOS'>PETISCOS / COZINHA</option><option value='VESTUARIO'>PATCHES / ACESSÓRIOS</option><option value='OUTROS'>OUTROS</option></select><input name='preco' placeholder='Preço de Venda' step='0.01' type='number' class='input-padrao' style='width:120px;' required><input name='qtd' type='number' placeholder='Qtd Estoque' class='input-padrao' style='width:100px;' required><button class='btn-acao' style='width:100%; font-size:18px;'>SALVAR NO ESTOQUE</button></form></div>"
     return f"<html><head>{CSS}</head><body><div class='container-center'><div class='card-center' style='max-width:800px;'>{IMG_LOGO_PEQ}<h2>📦 Gestão de Estoque</h2>{add_form}<div style='max-height:400px; overflow-y:auto; border:1px solid {COR_BORDA};'><table><tr><th>Produto</th><th>Preço</th><th>Qtd Atual</th><th>Ações</th></tr>{linhas}</table></div><br><a href='/central' style='color:#777'>Voltar</a></div></div></body></html>"
 
 @app.post("/novo_produto")
@@ -543,34 +441,12 @@ async def dashboard(request: Request, inicio: str = "", fim: str = "", tipo_vend
         top_db = conn.execute(text(f"SELECT item_nome, COUNT(*) as qtd FROM vendas_itens WHERE status = 'FECHADA' AND comanda_num IN (SELECT numero_comanda FROM comandas WHERE {where_clause}) GROUP BY item_nome ORDER BY qtd DESC LIMIT 5"), params).fetchall()
         html_top = "".join([f"<div class='item-linha'><span>{i+1}º {r.item_nome}</span><b style='color:{COR_AMARELO};'>{r.qtd} un</b></div>" for i, r in enumerate(top_db)])
 
-    opcoes_select = f"""
-    <option value='TODOS' {'selected' if tipo_venda == 'TODOS' else ''}>⚙️ TODOS OS TIPOS</option>
-    <option value='DINHEIRO' {'selected' if tipo_venda == 'DINHEIRO' else ''}>💵 DINHEIRO</option>
-    <option value='PIX' {'selected' if tipo_venda == 'PIX' else ''}>💠 PIX</option>
-    <option value='C. CREDITO' {'selected' if tipo_venda == 'C. CREDITO' else ''}>💳 CARTÃO CRÉDITO</option>
-    <option value='C. DEBITO' {'selected' if tipo_venda == 'C. DEBITO' else ''}>💳 CARTÃO DÉBITO</option>
-    """
-    return f"""<html><head>{CSS}</head><body><div class='container-center'><div class='card-center' style='max-width:800px;'>
-        {IMG_LOGO_PEQ}<h2>📊 Relatório Financeiro</h2>
-        <form method='get' class='filtro-box'>
-            <div style='flex:1; min-width:140px;'><label>Data Inicial:</label><br><input type='date' name='inicio' value='{dt_inicio}' class='input-padrao' style='margin:5px 0 0 0; padding:8px;'></div>
-            <div style='flex:1; min-width:140px;'><label>Data Final:</label><br><input type='date' name='fim' value='{dt_fim}' class='input-padrao' style='margin:5px 0 0 0; padding:8px;'></div>
-            <div style='flex:1; min-width:160px;'><label>Tipo:</label><br><select name='tipo_venda' class='input-padrao' style='margin:5px 0 0 0; padding:8px;'>{opcoes_select}</select></div>
-            <div style='display:flex; align-items:flex-end; min-width:100px;'><button class='btn-acao' style='margin:0; height:41px;'>FILTRAR</button></div>
-        </form>
-        <div class='grid-dash'><div class='card-kpi'><h3>Faturamento do Período</h3><p>R$ {faturamento_filtrado:.2f}</p></div></div>
-        <div style='display:flex; justify-content:space-between; flex-wrap:wrap; gap:10px; margin-bottom:20px;'>
-            <div style='background:#111; padding:15px; border-radius:8px; border-left:4px solid {COR_AMARELO}; flex:1;'><b>💵 Dinheiro:</b><br><span style='color:#FFF;'>R$ {totais_pag['DINHEIRO']:.2f}</span></div>
-            <div style='background:#111; padding:15px; border-radius:8px; border-left:4px solid {COR_AMARELO}; flex:1;'><b>💠 PIX:</b><br><span style='color:#FFF;'>R$ {totais_pag['PIX']:.2f}</span></div>
-            <div style='background:#111; padding:15px; border-radius:8px; border-left:4px solid {COR_AMARELO}; flex:1;'><b>💳 Cartões:</b><br><span style='color:#FFF;'>R$ {(totais_pag['C. CREDITO'] + totais_pag['C. DEBITO']):.2f}</span></div>
-        </div>
-        <div class='chart-container'><h3>🏆 MAIS VENDIDOS</h3>{html_top if html_top else '<p style="color:#777;">Nenhuma venda encontrada.</p>'}</div>
-        <br><a href='/central' class='btn-acao btn-dark' style='width:200px; margin:auto;'>VOLTAR</a>
-    </div></div></body></html>"""
+    opcoes_select = f"<option value='TODOS' {'selected' if tipo_venda == 'TODOS' else ''}>⚙️ TODOS OS TIPOS</option><option value='DINHEIRO' {'selected' if tipo_venda == 'DINHEIRO' else ''}>💵 DINHEIRO</option><option value='PIX' {'selected' if tipo_venda == 'PIX' else ''}>💠 PIX</option><option value='C. CREDITO' {'selected' if tipo_venda == 'C. CREDITO' else ''}>💳 CARTÃO CRÉDITO</option><option value='C. DEBITO' {'selected' if tipo_venda == 'C. DEBITO' else ''}>💳 CARTÃO DÉBITO</option>"
+    return f"<html><head>{CSS}</head><body><div class='container-center'><div class='card-center' style='max-width:800px;'>{IMG_LOGO_PEQ}<h2>📊 Relatório Financeiro</h2><form method='get' class='filtro-box'><div style='flex:1; min-width:140px;'><label>Data Inicial:</label><br><input type='date' name='inicio' value='{dt_inicio}' class='input-padrao' style='margin:5px 0 0 0; padding:8px;'></div><div style='flex:1; min-width:140px;'><label>Data Final:</label><br><input type='date' name='fim' value='{dt_fim}' class='input-padrao' style='margin:5px 0 0 0; padding:8px;'></div><div style='flex:1; min-width:160px;'><label>Tipo:</label><br><select name='tipo_venda' class='input-padrao' style='margin:5px 0 0 0; padding:8px;'>{opcoes_select}</select></div><div style='display:flex; align-items:flex-end; min-width:100px;'><button class='btn-acao' style='margin:0; height:41px;'>FILTRAR</button></div></form><div class='grid-dash'><div class='card-kpi'><h3>Faturamento do Período</h3><p>R$ {faturamento_filtrado:.2f}</p></div></div><div style='display:flex; justify-content:space-between; flex-wrap:wrap; gap:10px; margin-bottom:20px;'><div style='background:#111; padding:15px; border-radius:8px; border-left:4px solid {COR_AMARELO}; flex:1;'><b>💵 Dinheiro:</b><br><span style='color:#FFF;'>R$ {totais_pag['DINHEIRO']:.2f}</span></div><div style='background:#111; padding:15px; border-radius:8px; border-left:4px solid {COR_AMARELO}; flex:1;'><b>💠 PIX:</b><br><span style='color:#FFF;'>R$ {totais_pag['PIX']:.2f}</span></div><div style='background:#111; padding:15px; border-radius:8px; border-left:4px solid {COR_AMARELO}; flex:1;'><b>💳 Cartões:</b><br><span style='color:#FFF;'>R$ {(totais_pag['C. CREDITO'] + totais_pag['C. DEBITO']):.2f}</span></div></div><div class='chart-container'><h3>🏆 MAIS VENDIDOS</h3>{html_top if html_top else '<p style=\"color:#777;\">Nenhuma venda encontrada.</p>'}</div><br><a href='/central' class='btn-acao btn-dark' style='width:200px; margin:auto;'>VOLTAR</a></div></div></body></html>"
 
 
 # ==========================================
-# MÓDULO 5: GERENCIAR USUÁRIOS
+# MÓDULO 5: GERENCIAR USUÁRIOS E IMPRESSORA
 # ==========================================
 @app.get("/usuarios", response_class=HTMLResponse)
 async def tela_usuarios(request: Request):
