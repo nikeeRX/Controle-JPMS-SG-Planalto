@@ -80,10 +80,6 @@ CSS = f"""
     .btn-dark:hover {{ background: {COR_AMARELO}; color: #000; }}
     .btn-red {{ background: {COR_VERMELHO}; color: white; }}
     .btn-red:hover {{ box-shadow: 0 0 12px rgba(200, 40, 40, 0.5); }}
-    
-    /* ESTILO PARA BOTÃO BLOQUEADO (CADEADO) */
-    .btn-locked {{ width: 100%; padding: 25px; margin-bottom: 8px; font-size: 16px; background: #0A0A0A; color: #444; border: 1px dashed #333; border-radius: 5px; font-weight: bold; text-transform: uppercase; cursor: not-allowed; text-align: center; }}
-    
     .container-center {{ display: flex; align-items: center; justify-content: center; height: 100vh; padding: 20px; overflow-y: auto; }}
     .card-center {{ background: {COR_CARD}; color: {COR_TEXTO}; padding: 30px; border-radius: 15px; width: 100%; max-width: 650px; text-align: center; box-shadow: 0 12px 40px rgba(0,0,0,0.9); margin: auto; border: 1px solid {COR_BORDA}; }}
     .input-padrao {{ width: 100%; padding: 12px; margin: 8px 0; border: 1px solid {COR_BORDA}; border-radius: 5px; font-size: 16px; box-sizing: border-box; background: {COR_INPUT}; color: {COR_AMARELO}; font-weight: bold; }}
@@ -149,97 +145,82 @@ async def logout(request: Request):
     return RedirectResponse("/")
 
 # ==========================================
-# O NOVO HUB CENTRAL INTELIGENTE (COM CADEADOS VISUAIS)
+# O NOVO HUB CENTRAL LIMPO (SÓ APARECE O QUE TEM ACESSO)
 # ==========================================
 @app.get("/central", response_class=HTMLResponse)
 async def central(request: Request):
     user, role = request.session.get("user"), request.session.get("role")
     if not user: return RedirectResponse(url="/")
     
-    # 🦅 STEEL GOOSE (Liberado para todos os membros ativos)
-    btn_sg = "<a href='/modulo/steelgoose' class='btn-acao btn-dark' style='padding:25px; font-size:16px;'>🦅 STEEL GOOSE</a>"
+    botoes = ""
+    # 🦅 STEEL GOOSE (Todos os ativos)
+    botoes += "<a href='/modulo/steelgoose' class='btn-acao btn-dark' style='padding:25px; font-size:16px;'>🦅 STEEL GOOSE</a>"
     
     # 🗄️ SECRETARIA
     if role in ["admin", "diretoria", "secretario"]:
-        btn_sec = "<a href='/modulo/secretaria' class='btn-acao btn-dark' style='padding:25px; font-size:16px;'>🗄️ SECRETARIA</a>"
-    else:
-        btn_sec = "<button class='btn-locked' disabled>🗄️ SECRETARIA 🔒</button>"
+        botoes += "<a href='/modulo/secretaria' class='btn-acao btn-dark' style='padding:25px; font-size:16px;'>🗄️ SECRETARIA</a>"
 
-    # 💰 TESOURARIA E BAR
-    if role in ["admin", "diretoria", "tesoureiro", "caixa"]:
-        btn_tes = "<a href='/tesouraria' class='btn-acao' style='padding:25px; font-size:16px; box-shadow: 0 0 15px rgba(243, 186, 22, 0.2);'>💰 TESOURARIA (BAR)</a>"
-    else:
-        btn_tes = "<button class='btn-locked' disabled>💰 TESOURARIA 🔒</button>"
+    # 💰 TESOURARIA DO CLUBE (Separado do Bar)
+    if role in ["admin", "diretoria", "tesoureiro"]:
+        botoes += "<a href='/tesouraria' class='btn-acao btn-dark' style='padding:25px; font-size:16px;'>💰 TESOURARIA (CLUBE)</a>"
 
     # 📸 RELAÇÕES PÚBLICAS
     if role in ["admin", "diretoria", "rp"]:
-        btn_rp = "<a href='/modulo/rp' class='btn-acao btn-dark' style='padding:25px; font-size:16px;'>📸 RELAÇÕES PÚBLICAS</a>"
-    else:
-        btn_rp = "<button class='btn-locked' disabled>📸 RELAÇÕES PÚBLICAS 🔒</button>"
+        botoes += "<a href='/modulo/rp' class='btn-acao btn-dark' style='padding:25px; font-size:16px;'>📸 RELAÇÕES PÚBLICAS</a>"
 
     # 👔 DIRETORIA
     if role in ["admin", "diretoria"]:
-        btn_dir = "<a href='/diretoria' class='btn-acao btn-red' style='padding:25px; font-size:16px;'>👔 DIRETORIA</a>"
-    else:
-        btn_dir = "<button class='btn-locked' disabled>👔 DIRETORIA 🔒</button>"
+        botoes += "<a href='/diretoria' class='btn-acao btn-red' style='padding:25px; font-size:16px;'>👔 DIRETORIA</a>"
 
-    # 📢 OUVIDORIA (Liberado para todos enviarem sugestões/reclamações)
-    btn_ouv = "<a href='/modulo/ouvidoria' class='btn-acao btn-dark' style='padding:25px; font-size:16px;'>📢 OUVIDORIA</a>"
+    # 📢 OUVIDORIA (Todos os ativos)
+    botoes += "<a href='/modulo/ouvidoria' class='btn-acao btn-dark' style='padding:25px; font-size:16px;'>📢 OUVIDORIA</a>"
 
-    # 🦉 OLD GOOSE (Totalmente separado da tesouraria e blindado)
-    if role in ["admin", "diretoria", "old_goose"]:
-        btn_old = "<a href='/oldgoose' class='btn-acao btn-dark' style='padding:25px; font-size:16px; grid-column: 1 / -1;'>🦉 OLD GOOSE</a>"
-    else:
-        btn_old = "<button class='btn-locked' style='grid-column: 1 / -1;' disabled>🦉 OLD GOOSE 🔒</button>"
+    # 🦉 OLD GOOSE (O BAR)
+    if role in ["admin", "diretoria", "old_goose", "caixa"]:
+        botoes += "<a href='/oldgoose' class='btn-acao' style='padding:25px; font-size:16px; grid-column: 1 / -1; box-shadow: 0 0 15px rgba(243, 186, 22, 0.2);'>🦉 OLD GOOSE (BAR)</a>"
 
-    botoes_grid = f"<div style='display:grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap:15px; margin-top:20px;'>{btn_sg}{btn_sec}{btn_tes}{btn_rp}{btn_dir}{btn_ouv}{btn_old}</div>"
+    botoes_grid = f"<div style='display:grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap:15px; margin-top:20px;'>{botoes}</div>"
     
     return f"<html><head>{CSS}</head><body><div class='container-center'><div class='card-center' style='max-width:850px;'>{IMG_LOGO_PEQ}<p style='color:#888;'>Painel de Controle: <b style='color:{COR_AMARELO}; text-transform:uppercase;'>{user} ({role})</b></p>{botoes_grid}<br><a href='/logout' style='color:#C82828; font-weight:bold; text-decoration:none;'>[ SAIR DO SISTEMA ]</a></div></div></body></html>"
 
 # ==========================================
 # ROTEADORES DOS MÓDULOS (SUBMENUS PROTEGIDOS)
 # ==========================================
-@app.get("/tesouraria", response_class=HTMLResponse)
-async def menu_tesouraria(request: Request):
+@app.get("/oldgoose", response_class=HTMLResponse)
+async def menu_oldgoose(request: Request):
     role = request.session.get("role")
-    if not role: return RedirectResponse("/")
+    if not role or role not in ["admin", "diretoria", "old_goose", "caixa"]:
+        return RedirectResponse("/central")
     
-    if role not in ["admin", "diretoria", "tesoureiro", "caixa"]:
-        return HTMLResponse("<script>alert('Acesso restrito à Diretoria, Tesouraria e Caixas!'); window.location.href='/central';</script>")
+    botoes = "<a href='/pdv' class='btn-acao' style='font-size: 18px; padding: 20px;'>🛒 PAINEL DE VENDAS (COMANDAS)</a>"
     
-    botoes = "<a href='/pdv' class='btn-acao' style='font-size: 18px; padding: 20px;'>🛒 PAINEL DO BAR (COMANDAS)</a>"
-    
-    if role in ["admin", "diretoria", "tesoureiro"]:
+    # Apenas a gerência do Bar/Diretoria mexe no estoque e relatórios
+    if role in ["admin", "diretoria", "old_goose"]:
         botoes += "<a href='/estoque' class='btn-acao btn-dark' style='font-size: 18px; padding: 20px;'>📦 GESTÃO DE ESTOQUE E PREÇOS</a>"
         botoes += "<a href='/dashboard' class='btn-acao btn-red' style='font-size: 18px; padding: 20px;'>📊 RELATÓRIOS DO BAR</a>"
         
     botoes += "<a href='/baixar_conector' class='btn-acao btn-dark' style='padding: 15px;'>🖨️ BAIXAR CONECTOR DE IMPRESSORA</a>"
     
-    return f"<html><head>{CSS}</head><body><div class='container-center'><div class='card-center'>{IMG_LOGO_PEQ}<h2>💰 MÓDULO TESOURARIA</h2><div style='display:flex; flex-direction:column; gap:12px; margin-top:20px;'>{botoes}</div><br><a href='/central' style='color:#777; text-decoration:none;'>⬅️ Voltar ao Menu</a></div></div></body></html>"
+    return f"<html><head>{CSS}</head><body><div class='container-center'><div class='card-center'>{IMG_LOGO_PEQ}<h2>🦉 MÓDULO OLD GOOSE (BAR)</h2><div style='display:flex; flex-direction:column; gap:12px; margin-top:20px;'>{botoes}</div><br><a href='/central' style='color:#777; text-decoration:none;'>⬅️ Voltar ao Hub Central</a></div></div></body></html>"
 
 @app.get("/diretoria", response_class=HTMLResponse)
 async def menu_diretoria(request: Request):
     role = request.session.get("role")
-    if not role: return RedirectResponse("/")
-    
-    if role not in ["admin", "diretoria"]:
-        return HTMLResponse("<script>alert('Acesso restrito à Diretoria!'); window.location.href='/central';</script>")
+    if not role or role not in ["admin", "diretoria"]:
+        return RedirectResponse("/central")
     
     botoes = "<a href='/usuarios' class='btn-acao' style='font-size: 18px; padding: 20px;'>👥 CONTROLE DE MEMBROS E ACESSOS</a>"
     if role == "admin":
         botoes += "<a href='/config_fiscal' class='btn-acao btn-dark' style='padding: 20px;'>⚙️ CONFIGURAÇÕES FISCAIS (NFC-e)</a>"
         
-    return f"<html><head>{CSS}</head><body><div class='container-center'><div class='card-center'>{IMG_LOGO_PEQ}<h2>👔 MÓDULO DIRETORIA</h2><div style='display:flex; flex-direction:column; gap:12px; margin-top:20px;'>{botoes}</div><br><a href='/central' style='color:#777; text-decoration:none;'>⬅️ Voltar ao Menu</a></div></div></body></html>"
+    return f"<html><head>{CSS}</head><body><div class='container-center'><div class='card-center'>{IMG_LOGO_PEQ}<h2>👔 MÓDULO DIRETORIA</h2><div style='display:flex; flex-direction:column; gap:12px; margin-top:20px;'>{botoes}</div><br><a href='/central' style='color:#777; text-decoration:none;'>⬅️ Voltar ao Hub Central</a></div></div></body></html>"
 
-@app.get("/oldgoose", response_class=HTMLResponse)
-async def menu_oldgoose(request: Request):
+@app.get("/tesouraria", response_class=HTMLResponse)
+async def menu_tesouraria(request: Request):
     role = request.session.get("role")
-    if not role: return RedirectResponse("/")
-    
-    if role not in ["admin", "diretoria", "old_goose"]:
-        return HTMLResponse("<script>alert('Acesso restrito aos Old Goose e Diretoria!'); window.location.href='/central';</script>")
-    
-    return f"<html><head>{CSS}</head><body><div class='container-center'><div class='card-center'>{IMG_LOGO_PEQ}<h2>🦉 OLD GOOSE</h2><p style='color:#888; font-size:16px; margin: 30px 0;'>🚧 Área exclusiva para os fundadores e conselheiros do clube. 🚧<br><br>As deliberações oficiais e a história do clube estão sendo estruturadas para cá.</p><a href='/central' class='btn-acao btn-dark' style='width:250px; margin:auto;'>⬅️ VOLTAR AO MENU</a></div></div></body></html>"
+    if not role or role not in ["admin", "diretoria", "tesoureiro"]:
+        return RedirectResponse("/central")
+    return f"<html><head>{CSS}</head><body><div class='container-center'><div class='card-center'>{IMG_LOGO_PEQ}<h2>💰 Tesouraria do Clube</h2><p style='color:#888; font-size:18px; margin: 40px 0;'>🚧 Área em Construção 🚧<br><br>As mensalidades e anuidades do clube estarão disponíveis aqui em breve.</p><a href='/central' class='btn-acao btn-dark' style='width:250px; margin:auto;'>⬅️ VOLTAR AO MENU</a></div></div></body></html>"
 
 @app.get("/modulo/{nome}", response_class=HTMLResponse)
 async def modulo_em_construcao(request: Request, nome: str):
@@ -250,11 +231,11 @@ async def modulo_em_construcao(request: Request, nome: str):
 
 
 # ==========================================
-# PAINEL DE COMANDAS DO BAR (PDV)
+# PAINEL DE COMANDAS DO OLD GOOSE (BAR / PDV)
 # ==========================================
 @app.get("/pdv", response_class=HTMLResponse)
 async def pdv_painel(request: Request):
-    if request.session.get("role") not in ["admin", "diretoria", "tesoureiro", "caixa"]: return RedirectResponse(url="/central")
+    if request.session.get("role") not in ["admin", "diretoria", "old_goose", "caixa"]: return RedirectResponse(url="/central")
     linhas_comandas = ""
     with engine.connect() as conn:
         comandas_abertas = conn.execute(text("SELECT numero_comanda, total_conta FROM comandas WHERE status = 'ABERTA' ORDER BY id DESC")).fetchall()
@@ -262,7 +243,7 @@ async def pdv_painel(request: Request):
             linhas_comandas += f"<div class='card-comanda-item' data-nome='{c.numero_comanda}' style='background:{COR_INPUT}; border:1px solid {COR_BORDA}; border-radius:8px; padding:15px; display:flex; justify-content:space-between; align-items:center;'><div><span style='font-size:18px; font-weight:bold; color:{COR_AMARELO};'>📋 {c.numero_comanda.upper()}</span><br><small style='color:#888;'>Consumo Parcial</small></div><div style='text-align:right;'><span style='font-size:20px; font-weight:bold; color:#FFF;'>R$ {float(c.total_conta or 0):.2f}</span><br><a href='/pdv/comanda/{urllib.parse.quote(c.numero_comanda)}' class='btn-acao' style='padding:5px 12px; margin:5px 0 0 0; font-size:12px; display:inline-block; width:auto;'>Lançar / Fechar</a></div></div>"
     if not linhas_comandas: linhas_comandas = "<p id='sem-comandas' style='color:#555; grid-column: 1/-1; text-align:center;'>Nenhuma comanda aberta.</p>"
     js_busca = "<script>function filtrarComandas() { let input = document.getElementById('busca-comanda'); let filter = input.value.toLowerCase().trim(); let container = document.getElementById('lista-comandas-grid'); let items = container.getElementsByClassName('card-comanda-item'); for (let i = 0; i < items.length; i++) { let nomeComanda = items[i].getAttribute('data-nome').toLowerCase(); if (nomeComanda.includes(filter)) { items[i].style.display = 'flex'; } else { items[i].style.display = 'none'; } } }</script>"
-    return f"<html><head>{CSS}{js_busca}</head><body style='background:{COR_FUNDO}; overflow-y:auto;'><div class='container-center' style='height:auto; padding:40px 20px;'><div class='card-center' style='max-width:900px;'>{IMG_LOGO_PEQ}<h2>🛒 Controle do Bar</h2><div style='background:#0A0A0A; padding:20px; border-radius:10px; border:1px solid {COR_BORDA}; margin-bottom:25px;'><h3 style='margin-bottom:15px;'>⚡ GERENCIAR ATENDIMENTO</h3><div style='display:flex; gap:15px; flex-wrap:wrap;'><button class='btn-acao' style='flex:1; font-size:18px; padding:20px;' onclick='document.getElementById(\"box-comanda\").style.display=\"block\";'>📋 ABRIR COMANDA</button><form action='/pdv/abrir_avulso' method='post' style='flex:1; margin:0;'><button class='btn-acao btn-dark' style='width:100%; font-size:18px; padding:20px;'>🛒 VENDA AVULSA</button></form></div><div id='box-comanda' style='display:none; margin-top:20px; border-top:1px dashed {COR_BORDA}; padding-top:15px;'><form action='/pdv/abrir_comanda' method='post'><label style='font-size:14px; color:#AAA;'>Comanda (Nome/Nº):</label><input class='input-padrao' name='nome_comanda' placeholder='Ex: Pará...' required autocomplete='off'><button class='btn-acao' style='width:200px; margin-top:5px;'>INICIAR</button></form></div></div><div style='margin-bottom: 15px; text-align: left;'><label style='font-size: 12px; color: #777; font-weight: bold;'>🔍 BUSCAR COMANDA:</label><input type='text' id='busca-comanda' oninput='filtrarComandas()' class='input-padrao' placeholder='Digitar...' autocomplete='off'></div><h3>📋 Comandas Ativas</h3><div id='lista-comandas-grid' style='display:grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap:15px; text-align:left; margin-top:15px;'>{linhas_comandas}</div><br><a href='/tesouraria' class='btn-acao btn-dark' style='width:200px; margin:auto;'>⬅️ Voltar à Tesouraria</a></div></div></body></html>"
+    return f"<html><head>{CSS}{js_busca}</head><body style='background:{COR_FUNDO}; overflow-y:auto;'><div class='container-center' style='height:auto; padding:40px 20px;'><div class='card-center' style='max-width:900px;'>{IMG_LOGO_PEQ}<h2>🛒 Controle do Bar</h2><div style='background:#0A0A0A; padding:20px; border-radius:10px; border:1px solid {COR_BORDA}; margin-bottom:25px;'><h3 style='margin-bottom:15px;'>⚡ GERENCIAR ATENDIMENTO</h3><div style='display:flex; gap:15px; flex-wrap:wrap;'><button class='btn-acao' style='flex:1; font-size:18px; padding:20px;' onclick='document.getElementById(\"box-comanda\").style.display=\"block\";'>📋 ABRIR COMANDA</button><form action='/pdv/abrir_avulso' method='post' style='flex:1; margin:0;'><button class='btn-acao btn-dark' style='width:100%; font-size:18px; padding:20px;'>🛒 VENDA AVULSA</button></form></div><div id='box-comanda' style='display:none; margin-top:20px; border-top:1px dashed {COR_BORDA}; padding-top:15px;'><form action='/pdv/abrir_comanda' method='post'><label style='font-size:14px; color:#AAA;'>Comanda (Nome/Nº):</label><input class='input-padrao' name='nome_comanda' placeholder='Ex: Pará...' required autocomplete='off'><button class='btn-acao' style='width:200px; margin-top:5px;'>INICIAR</button></form></div></div><div style='margin-bottom: 15px; text-align: left;'><label style='font-size: 12px; color: #777; font-weight: bold;'>🔍 BUSCAR COMANDA:</label><input type='text' id='busca-comanda' oninput='filtrarComandas()' class='input-padrao' placeholder='Digitar...' autocomplete='off'></div><h3>📋 Comandas Ativas</h3><div id='lista-comandas-grid' style='display:grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap:15px; text-align:left; margin-top:15px;'>{linhas_comandas}</div><br><a href='/oldgoose' class='btn-acao btn-dark' style='width:200px; margin:auto;'>⬅️ Voltar ao Old Goose</a></div></div></body></html>"
 
 @app.post("/pdv/abrir_comanda")
 async def abrir_comanda(nome_comanda: str = Form(...)):
@@ -284,7 +265,7 @@ async def abrir_avulso():
 
 @app.get("/pdv/comanda/{numero_comanda}", response_class=HTMLResponse)
 async def tela_comanda_detalhe(numero_comanda: str, request: Request):
-    if request.session.get("role") not in ["admin", "diretoria", "tesoureiro", "caixa"]: return RedirectResponse(url="/central")
+    if request.session.get("role") not in ["admin", "diretoria", "old_goose", "caixa"]: return RedirectResponse(url="/central")
     with engine.connect() as conn:
         comanda = conn.execute(text("SELECT numero_comanda, total_conta FROM comandas WHERE numero_comanda = :c AND status = 'ABERTA' ORDER BY id DESC LIMIT 1"), {"c": numero_comanda}).fetchone()
         if not comanda: return RedirectResponse(url="/pdv")
@@ -334,11 +315,11 @@ async def finalizar_comanda(request: Request, comanda_num: str = Form(...), paga
     return HTMLResponse(f"<script>alert('Conta {comanda_num} fechada!'); window.location.href='/pdv';</script>")
 
 # ==========================================
-# GESTÃO DE ESTOQUE E DASHBOARD
+# GESTÃO DE ESTOQUE E DASHBOARD (OLD GOOSE)
 # ==========================================
 @app.get("/estoque", response_class=HTMLResponse)
 async def tela_estoque(request: Request):
-    if request.session.get("role") not in ["admin", "diretoria", "tesoureiro"]: return RedirectResponse(url="/central")
+    if request.session.get("role") not in ["admin", "diretoria", "old_goose"]: return RedirectResponse(url="/central")
     linhas = ""
     with engine.connect() as conn:
         prods_db = conn.execute(text("SELECT id, nome, categoria, preco, estoque FROM produtos ORDER BY nome")).fetchall()
@@ -349,11 +330,11 @@ async def tela_estoque(request: Request):
     add_form = f"<div style='background:#0A0A0A; padding:20px; border-radius:10px; margin-bottom:20px; border:1px solid {COR_BORDA};'><h3>➕ CADASTRAR PRODUTO NO BAR</h3><form action='/novo_produto' method='post' style='display:flex; flex-wrap:wrap; gap:10px;'><input name='nome' placeholder='Nome da Bebida / Item' class='input-padrao' style='flex:2;' required><select name='cat' class='input-padrao' style='flex:1;'><option value='BEBIDAS'>BEBIDAS</option><option value='ALIMENTOS'>ALIMENTOS</option><option value='VESTUARIO'>VESTUARIO</option></select><input name='preco' placeholder='Preço' step='0.01' type='number' class='input-padrao' style='width:120px;' required><input name='qtd' type='number' placeholder='Qtd' class='input-padrao' style='width:100px;' required><button class='btn-acao' style='width:100%;'>SALVAR NO ESTOQUE</button></form></div>"
     modal_edit = f"<div id='editModal' style='display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.8); z-index:1000; align-items:center; justify-content:center;'><div class='card-center' style='position:relative; width:90%; max-width:400px; padding:20px; background:#121214;'><span onclick='fecharModal()' style='position:absolute; top:10px; right:15px; cursor:pointer; font-size:24px; color:#FFF;'>&times;</span><h3 style='margin-top:0;'>✏️ EDITAR PRODUTO</h3><form action='/editar_produto' method='post' style='display:flex; flex-direction:column; gap:10px;'><input type='hidden' name='id' id='edit_id'><input name='nome' id='edit_nome' class='input-padrao' required><select name='cat' id='edit_cat' class='input-padrao' required><option value='BEBIDAS'>BEBIDAS</option><option value='ALIMENTOS'>ALIMENTOS</option><option value='VESTUARIO'>VESTUARIO</option></select><input name='preco' id='edit_preco' type='number' step='0.01' class='input-padrao' required><button class='btn-acao' style='margin-top:10px;'>SALVAR ALTERAÇÕES</button></form></div></div>"
     js_modal = "<script>function abrirModal(id, nome, cat, preco) { document.getElementById('edit_id').value = id; document.getElementById('edit_nome').value = nome; document.getElementById('edit_cat').value = cat; document.getElementById('edit_preco').value = preco; document.getElementById('editModal').style.display = 'flex'; } function fecharModal() { document.getElementById('editModal').style.display = 'none'; }</script>"
-    return f"<html><head>{CSS}{js_modal}</head><body>{modal_edit}<div class='container-center'><div class='card-center' style='max-width:800px;'>{IMG_LOGO_PEQ}<h2>📦 Estoque</h2>{add_form}<div style='max-height:400px; overflow-y:auto; border:1px solid {COR_BORDA};'><table><tr><th>Produto</th><th>Preço</th><th>Qtd</th><th>Ações</th></tr>{linhas}</table></div><br><a href='/tesouraria' class='btn-acao btn-dark' style='width:200px; margin:auto;'>Voltar</a></div></div></body></html>"
+    return f"<html><head>{CSS}{js_modal}</head><body>{modal_edit}<div class='container-center'><div class='card-center' style='max-width:800px;'>{IMG_LOGO_PEQ}<h2>📦 Estoque</h2>{add_form}<div style='max-height:400px; overflow-y:auto; border:1px solid {COR_BORDA};'><table><tr><th>Produto</th><th>Preço</th><th>Qtd</th><th>Ações</th></tr>{linhas}</table></div><br><a href='/oldgoose' class='btn-acao btn-dark' style='width:200px; margin:auto;'>⬅️ Voltar ao Old Goose</a></div></div></body></html>"
 
 @app.post("/novo_produto")
 async def novo_produto(request: Request):
-    if request.session.get("role") not in ["admin", "diretoria", "tesoureiro"]: return RedirectResponse(url="/central")
+    if request.session.get("role") not in ["admin", "diretoria", "old_goose"]: return RedirectResponse(url="/central")
     f = await request.form()
     try:
         with engine.begin() as conn: conn.execute(text("INSERT INTO produtos (codigo_barras, nome, categoria, preco, estoque) VALUES (:cb, :n, :c, :p, :q)"), {"cb": "SG-"+datetime.now().strftime("%f"), "n": f.get("nome").upper(), "c": f.get("cat"), "p": float(f.get("preco").replace(",", ".")), "q": int(f.get("qtd"))})
@@ -362,7 +343,7 @@ async def novo_produto(request: Request):
 
 @app.post("/att_estoque")
 async def att_estoque(request: Request):
-    if request.session.get("role") not in ["admin", "diretoria", "tesoureiro"]: return RedirectResponse(url="/central")
+    if request.session.get("role") not in ["admin", "diretoria", "old_goose"]: return RedirectResponse(url="/central")
     f = await request.form()
     try:
         with engine.begin() as conn: conn.execute(text("UPDATE produtos SET estoque = COALESCE(estoque, 0) + :q WHERE id = :id"), {"id": f.get("id"), "q": int(f.get("q", "0"))})
@@ -371,7 +352,7 @@ async def att_estoque(request: Request):
 
 @app.post("/editar_produto")
 async def editar_produto(request: Request):
-    if request.session.get("role") not in ["admin", "diretoria", "tesoureiro"]: return RedirectResponse(url="/central")
+    if request.session.get("role") not in ["admin", "diretoria", "old_goose"]: return RedirectResponse(url="/central")
     f = await request.form()
     try:
         with engine.begin() as conn: conn.execute(text("UPDATE produtos SET nome = :n, categoria = :c, preco = :p WHERE id = :id"), {"n": f.get("nome").upper(), "c": f.get("cat"), "p": float(f.get("preco").replace(",", ".")), "id": f.get("id")})
@@ -380,7 +361,7 @@ async def editar_produto(request: Request):
 
 @app.post("/excluir_produto")
 async def excluir_produto(request: Request):
-    if request.session.get("role") not in ["admin", "diretoria", "tesoureiro"]: return RedirectResponse(url="/central")
+    if request.session.get("role") not in ["admin", "diretoria", "old_goose"]: return RedirectResponse(url="/central")
     f = await request.form()
     try:
         with engine.begin() as conn: conn.execute(text("DELETE FROM produtos WHERE id = :id"), {"id": f.get("id")})
@@ -389,7 +370,7 @@ async def excluir_produto(request: Request):
 
 @app.get("/dashboard", response_class=HTMLResponse)
 async def dashboard(request: Request, inicio: str = "", fim: str = ""):
-    if request.session.get("role") not in ["admin", "diretoria", "tesoureiro"]: return RedirectResponse(url="/central")
+    if request.session.get("role") not in ["admin", "diretoria", "old_goose"]: return RedirectResponse(url="/central")
     dt_inicio = inicio if inicio else date.today().strftime("%Y-%m-%d")
     dt_fim = fim if fim else date.today().strftime("%Y-%m-%d")
     where_clause = "status = 'FECHADA' AND CAST(data_fechamento AS DATE) BETWEEN CAST(:inicio AS DATE) AND CAST(:fim AS DATE)"
@@ -398,7 +379,7 @@ async def dashboard(request: Request, inicio: str = "", fim: str = ""):
         faturamento = float(kpi.total or 0)
         itens_db = conn.execute(text(f"SELECT item_nome, COUNT(*) as qtd, SUM(valor) as t FROM vendas_itens WHERE status = 'FECHADA' AND comanda_num IN (SELECT numero_comanda FROM comandas WHERE {where_clause}) GROUP BY item_nome ORDER BY qtd DESC"), {"inicio": dt_inicio, "fim": dt_fim}).fetchall()
         linhas_tabela = "".join([f"<tr><td style='color:#FFF;'>{it.item_nome}</td><td style='color:{COR_AMARELO}; text-align:center;'>{it.qtd}</td><td style='color:#FFF; text-align:right;'>R$ {float(it.t):.2f}</td></tr>" for it in itens_db])
-    return f"<html><head>{CSS}</head><body><div class='container-center'><div class='card-center' style='max-width:800px;'>{IMG_LOGO_PEQ}<h2>📊 Relatório do Bar</h2><form method='get' class='filtro-box'><div style='flex:1;'><label>Data Início:</label><br><input type='date' name='inicio' value='{dt_inicio}' class='input-padrao'></div><div style='flex:1;'><label>Data Fim:</label><br><input type='date' name='fim' value='{dt_fim}' class='input-padrao'></div><div style='display:flex; align-items:flex-end;'><button class='btn-acao' style='margin:0; height:48px;'>FILTRAR</button></div></form><div class='grid-dash'><div class='card-kpi'><h3>Faturamento do Período</h3><p>R$ {faturamento:.2f}</p></div></div><div class='chart-container'><h3>📋 ITENS VENDIDOS</h3><table style='margin-top:0;'><thead><tr><th style='color:{COR_AMARELO};'>Produto</th><th style='color:{COR_AMARELO}; text-align:center;'>Qtd</th><th style='color:{COR_AMARELO}; text-align:right;'>Arrecadado</th></tr></thead><tbody>{linhas_tabela if linhas_tabela else "<tr><td colspan='3' style='text-align:center;'>Nenhuma venda.</td></tr>"}</tbody></table></div><br><a href='/tesouraria' class='btn-acao btn-dark' style='width:200px; margin:auto;'>VOLTAR</a></div></div></body></html>"
+    return f"<html><head>{CSS}</head><body><div class='container-center'><div class='card-center' style='max-width:800px;'>{IMG_LOGO_PEQ}<h2>📊 Relatório do Bar</h2><form method='get' class='filtro-box'><div style='flex:1;'><label>Data Início:</label><br><input type='date' name='inicio' value='{dt_inicio}' class='input-padrao'></div><div style='flex:1;'><label>Data Fim:</label><br><input type='date' name='fim' value='{dt_fim}' class='input-padrao'></div><div style='display:flex; align-items:flex-end;'><button class='btn-acao' style='margin:0; height:48px;'>FILTRAR</button></div></form><div class='grid-dash'><div class='card-kpi'><h3>Faturamento do Período</h3><p>R$ {faturamento:.2f}</p></div></div><div class='chart-container'><h3>📋 ITENS VENDIDOS</h3><table style='margin-top:0;'><thead><tr><th style='color:{COR_AMARELO};'>Produto</th><th style='color:{COR_AMARELO}; text-align:center;'>Qtd</th><th style='color:{COR_AMARELO}; text-align:right;'>Arrecadado</th></tr></thead><tbody>{linhas_tabela if linhas_tabela else "<tr><td colspan='3' style='text-align:center;'>Nenhuma venda.</td></tr>"}</tbody></table></div><br><a href='/oldgoose' class='btn-acao btn-dark' style='width:250px; margin:auto;'>⬅️ Voltar ao Old Goose</a></div></div></body></html>"
 
 # ==========================================
 # MÓDULO DIRETORIA: CONTROLE DE USUÁRIOS E ACESSOS
@@ -421,9 +402,9 @@ async def tela_usuarios(request: Request):
                 btn_del = f"<form action='/excluir_usuario' method='post' style='margin:0;' onsubmit='return confirm(\"Excluir?\");'><input type='hidden' name='id' value='{r.id}'><button class='btn-acao btn-red' style='padding:8px; margin:0;'>🗑️</button></form>"
                 acoes = f"<div style='display:flex; gap:5px;'>{btn_block}{btn_edit_acesso}{btn_del}</div>"
             st_badge = f"<span style='color:#10b981; font-weight:bold;'>ATIVO</span>" if r.status == 'ATIVO' else f"<span style='color:{COR_VERMELHO}; font-weight:bold;'>PENDENTE/BLOQ.</span>"
-            linhas += f"<tr><td><b style='color:#FFF;'>{r.username.upper()}</b><br><small style='color:#888;'>{r.email or 'S/ Email'}</small></td><td style='color:{COR_AMARELO}; font-weight:bold;'>{r.role.upper()}</td><td>{st_badge}</td><td>{acoes}</td></tr>"
+            linhas += f"<tr><td><b style='color:#FFF;'>{r.username.upper()}</b><br><small style='color:#888;'>{r.email or 'S/ Email'}</small></td><td style='color:{COR_AMARELO}; font-weight:bold;'>{r.role.upper().replace('_', ' ')}</td><td>{st_badge}</td><td>{acoes}</td></tr>"
             
-    opcoes_cargos = "<option value='candidato'>CANDIDATO</option><option value='membro'>MEMBRO</option><option value='secretario'>SECRETÁRIO</option><option value='tesoureiro'>TESOUREIRO</option><option value='caixa'>CAIXA DO BAR</option><option value='rp'>RELAÇÕES PÚBLICAS</option><option value='ouvidoria'>OUVIDORIA</option><option value='old_goose'>OLD GOOSE</option><option value='diretoria'>DIRETORIA</option>"
+    opcoes_cargos = "<option value='candidato'>CANDIDATO</option><option value='membro'>MEMBRO</option><option value='secretario'>SECRETÁRIO</option><option value='tesoureiro'>TESOUREIRO</option><option value='rp'>RELAÇÕES PÚBLICAS</option><option value='diretoria'>DIRETORIA</option><option value='ouvidoria'>OUVIDORIA</option><option value='old_goose'>OLD GOOSE</option>"
     add_form = f"<div style='background:#0A0A0A; padding:20px; border-radius:10px; margin-bottom:20px; border:1px solid {COR_BORDA};'><h3>➕ CRIAR ACESSO MANUAL</h3><form action='/novo_usuario_direto' method='post' style='display:flex; flex-wrap:wrap; gap:10px;'><input name='u' placeholder='Login' class='input-padrao' style='flex:1;' required><input name='e' type='email' placeholder='E-mail' class='input-padrao' style='flex:1;' required><input name='p' type='password' placeholder='Senha' class='input-padrao' style='flex:1;' required><select name='r' class='input-padrao' style='flex:1;'>{opcoes_cargos}</select><button class='btn-acao' style='width:100%;'>SALVAR USUÁRIO</button></form></div>"
     
     modal_acesso = f"""
