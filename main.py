@@ -162,7 +162,7 @@ async def central(request: Request):
 
     # 💰 TESOURARIA DO CLUBE (Separado do Bar)
     if role in ["admin", "diretoria", "tesoureiro"]:
-        botoes += "<a href='/tesouraria' class='btn-acao btn-dark' style='padding:25px; font-size:16px;'>💰 TESOURARIA (CLUBE)</a>"
+        botoes += "<a href='/tesouraria' class='btn-acao btn-dark' style='padding:25px; font-size:16px;'>💰 TESOURARIA </a>"
 
     # 📸 RELAÇÕES PÚBLICAS
     if role in ["admin", "diretoria", "rp"]:
@@ -177,7 +177,7 @@ async def central(request: Request):
 
     # 🦉 OLD GOOSE (O BAR)
     if role in ["admin", "diretoria", "old_goose", "caixa"]:
-        botoes += "<a href='/oldgoose' class='btn-acao' style='padding:25px; font-size:16px; grid-column: 1 / -1; box-shadow: 0 0 15px rgba(243, 186, 22, 0.2);'>🦉 OLD GOOSE (BAR)</a>"
+        botoes += "<a href='/oldgoose' class='btn-acao' style='padding:25px; font-size:16px; grid-column: 1 / -1; box-shadow: 0 0 15px rgba(243, 186, 22, 0.2);'>🦉 OLD GOOSE </a>"
 
     botoes_grid = f"<div style='display:grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap:15px; margin-top:20px;'>{botoes}</div>"
     
