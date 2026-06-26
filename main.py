@@ -29,15 +29,16 @@ with engine.begin() as conn:
         CREATE TABLE IF NOT EXISTS comandas (id SERIAL PRIMARY KEY, numero_comanda TEXT NOT NULL, total_conta DECIMAL(10,2) DEFAULT 0.00, status TEXT DEFAULT 'ABERTA', forma_pagamento TEXT, data_fechamento TIMESTAMP DEFAULT CURRENT_TIMESTAMP, nfe_solicitada BOOLEAN DEFAULT FALSE, cpf_nota TEXT);
         CREATE TABLE IF NOT EXISTS vendas_itens (id SERIAL PRIMARY KEY, comanda_num TEXT, item_nome TEXT, valor DECIMAL(10,2), data_venda DATE DEFAULT CURRENT_DATE, hora_venda TIME DEFAULT CURRENT_TIME, status TEXT DEFAULT 'ABERTA');
         CREATE TABLE IF NOT EXISTS fila_impressao (id SERIAL PRIMARY KEY, conteudo TEXT, status TEXT DEFAULT 'PENDENTE', data_criacao TIMESTAMP DEFAULT CURRENT_TIMESTAMP);
-        CREATE TABLE IF NOT EXISTS historico_estoque (id SERIAL PRIMARY KEY, produto_nome TEXT, qtd_adicionada INT, data_entrada DATE DEFAULT CURRENT_DATE);
+        CREATE TABLE IF NOT EXISTS historico_estoque (id SERIAL PRIMARY KEY, produto_nome TEXT, qtd_adicionada INT, data_entrada DATE DEFAULT CURRENT_DATE, valor_custo DECIMAL(10,2) DEFAULT 0.00);
         CREATE TABLE IF NOT EXISTS configuracoes_nfe (id SERIAL PRIMARY KEY, token_focus TEXT, ambiente TEXT DEFAULT 'HOMOLOGACAO', senha_certificado TEXT, nome_arquivo_cert TEXT);
     """))
 
-# Migrações seguras
+# Migrações seguras (Incluindo a nova coluna de Custo no Histórico)
 MIGRACOES = [
     "ALTER TABLE comandas ALTER COLUMN status SET DEFAULT 'ABERTA';",
     "ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'ATIVO';",
-    "ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS email TEXT;"
+    "ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS email TEXT;",
+    "ALTER TABLE historico_estoque ADD COLUMN IF NOT EXISTS valor_custo DECIMAL(10,2) DEFAULT 0.00;"
 ]
 for mig in MIGRACOES:
     try:
@@ -80,6 +81,7 @@ CSS = f"""
     .btn-dark:hover {{ background: {COR_AMARELO}; color: #000; }}
     .btn-red {{ background: {COR_VERMELHO}; color: white; }}
     .btn-red:hover {{ box-shadow: 0 0 12px rgba(200, 40, 40, 0.5); }}
+    .btn-locked {{ width: 100%; padding: 25px; margin-bottom: 8px; font-size: 16px; background: #0A0A0A; color: #444; border: 1px dashed #333; border-radius: 5px; font-weight: bold; text-transform: uppercase; cursor: not-allowed; text-align: center; }}
     .container-center {{ display: flex; align-items: center; justify-content: center; height: 100vh; padding: 20px; overflow-y: auto; }}
     .card-center {{ background: {COR_CARD}; color: {COR_TEXTO}; padding: 30px; border-radius: 15px; width: 100%; max-width: 650px; text-align: center; box-shadow: 0 12px 40px rgba(0,0,0,0.9); margin: auto; border: 1px solid {COR_BORDA}; }}
     .input-padrao {{ width: 100%; padding: 12px; margin: 8px 0; border: 1px solid {COR_BORDA}; border-radius: 5px; font-size: 16px; box-sizing: border-box; background: {COR_INPUT}; color: {COR_AMARELO}; font-weight: bold; }}
@@ -145,81 +147,57 @@ async def logout(request: Request):
     return RedirectResponse("/")
 
 # ==========================================
-# O NOVO HUB CENTRAL LIMPO (SÓ APARECE O QUE TEM ACESSO)
+# O NOVO HUB CENTRAL LIMPO 
 # ==========================================
 @app.get("/central", response_class=HTMLResponse)
 async def central(request: Request):
     user, role = request.session.get("user"), request.session.get("role")
     if not user: return RedirectResponse(url="/")
     
-    botoes = ""
-    # 🦅 STEEL GOOSE (Todos os ativos)
-    botoes += "<a href='/modulo/steelgoose' class='btn-acao btn-dark' style='padding:25px; font-size:16px;'>🦅 STEEL GOOSE</a>"
-    
-    # 🗄️ SECRETARIA
+    botoes = "<a href='/modulo/steelgoose' class='btn-acao btn-dark' style='padding:25px; font-size:16px;'>🦅 STEEL GOOSE</a>"
     if role in ["admin", "diretoria", "secretario"]:
         botoes += "<a href='/modulo/secretaria' class='btn-acao btn-dark' style='padding:25px; font-size:16px;'>🗄️ SECRETARIA</a>"
-
-    # 💰 TESOURARIA DO CLUBE (Separado do Bar)
     if role in ["admin", "diretoria", "tesoureiro"]:
-        botoes += "<a href='/tesouraria' class='btn-acao btn-dark' style='padding:25px; font-size:16px;'>💰 TESOURARIA </a>"
-
-    # 📸 RELAÇÕES PÚBLICAS
+        botoes += "<a href='/tesouraria' class='btn-acao btn-dark' style='padding:25px; font-size:16px;'>💰 TESOURARIA (CLUBE)</a>"
     if role in ["admin", "diretoria", "rp"]:
         botoes += "<a href='/modulo/rp' class='btn-acao btn-dark' style='padding:25px; font-size:16px;'>📸 RELAÇÕES PÚBLICAS</a>"
-
-    # 👔 DIRETORIA
     if role in ["admin", "diretoria"]:
         botoes += "<a href='/diretoria' class='btn-acao btn-red' style='padding:25px; font-size:16px;'>👔 DIRETORIA</a>"
-
-    # 📢 OUVIDORIA (Todos os ativos)
+        
     botoes += "<a href='/modulo/ouvidoria' class='btn-acao btn-dark' style='padding:25px; font-size:16px;'>📢 OUVIDORIA</a>"
 
-    # 🦉 OLD GOOSE (O BAR)
     if role in ["admin", "diretoria", "old_goose", "caixa"]:
-        botoes += "<a href='/oldgoose' class='btn-acao' style='padding:25px; font-size:16px; grid-column: 1 / -1; box-shadow: 0 0 15px rgba(243, 186, 22, 0.2);'>🦉 OLD GOOSE </a>"
+        botoes += "<a href='/oldgoose' class='btn-acao' style='padding:25px; font-size:16px; grid-column: 1 / -1; box-shadow: 0 0 15px rgba(243, 186, 22, 0.2);'>🦉 OLD GOOSE (BAR)</a>"
 
     botoes_grid = f"<div style='display:grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap:15px; margin-top:20px;'>{botoes}</div>"
-    
     return f"<html><head>{CSS}</head><body><div class='container-center'><div class='card-center' style='max-width:850px;'>{IMG_LOGO_PEQ}<p style='color:#888;'>Painel de Controle: <b style='color:{COR_AMARELO}; text-transform:uppercase;'>{user} ({role})</b></p>{botoes_grid}<br><a href='/logout' style='color:#C82828; font-weight:bold; text-decoration:none;'>[ SAIR DO SISTEMA ]</a></div></div></body></html>"
 
 # ==========================================
-# ROTEADORES DOS MÓDULOS (SUBMENUS PROTEGIDOS)
+# ROTEADORES DOS MÓDULOS
 # ==========================================
 @app.get("/oldgoose", response_class=HTMLResponse)
 async def menu_oldgoose(request: Request):
     role = request.session.get("role")
-    if not role or role not in ["admin", "diretoria", "old_goose", "caixa"]:
-        return RedirectResponse("/central")
-    
+    if not role or role not in ["admin", "diretoria", "old_goose", "caixa"]: return RedirectResponse("/central")
     botoes = "<a href='/pdv' class='btn-acao' style='font-size: 18px; padding: 20px;'>🛒 PAINEL DE VENDAS (COMANDAS)</a>"
-    
-    # Apenas a gerência do Bar/Diretoria mexe no estoque e relatórios
     if role in ["admin", "diretoria", "old_goose"]:
-        botoes += "<a href='/estoque' class='btn-acao btn-dark' style='font-size: 18px; padding: 20px;'>📦 GESTÃO DE ESTOQUE E PREÇOS</a>"
+        botoes += "<a href='/estoque' class='btn-acao btn-dark' style='font-size: 18px; padding: 20px;'>📦 GESTÃO DE ESTOQUE E COMPRAS</a>"
         botoes += "<a href='/dashboard' class='btn-acao btn-red' style='font-size: 18px; padding: 20px;'>📊 RELATÓRIOS DO BAR</a>"
-        
     botoes += "<a href='/baixar_conector' class='btn-acao btn-dark' style='padding: 15px;'>🖨️ BAIXAR CONECTOR DE IMPRESSORA</a>"
-    
     return f"<html><head>{CSS}</head><body><div class='container-center'><div class='card-center'>{IMG_LOGO_PEQ}<h2>🦉 MÓDULO OLD GOOSE (BAR)</h2><div style='display:flex; flex-direction:column; gap:12px; margin-top:20px;'>{botoes}</div><br><a href='/central' style='color:#777; text-decoration:none;'>⬅️ Voltar ao Hub Central</a></div></div></body></html>"
 
 @app.get("/diretoria", response_class=HTMLResponse)
 async def menu_diretoria(request: Request):
     role = request.session.get("role")
-    if not role or role not in ["admin", "diretoria"]:
-        return RedirectResponse("/central")
-    
+    if not role or role not in ["admin", "diretoria"]: return RedirectResponse("/central")
     botoes = "<a href='/usuarios' class='btn-acao' style='font-size: 18px; padding: 20px;'>👥 CONTROLE DE MEMBROS E ACESSOS</a>"
-    if role == "admin":
-        botoes += "<a href='/config_fiscal' class='btn-acao btn-dark' style='padding: 20px;'>⚙️ CONFIGURAÇÕES FISCAIS (NFC-e)</a>"
-        
+    if role == "admin": botoes += "<a href='/config_fiscal' class='btn-acao btn-dark' style='padding: 20px;'>⚙️ CONFIGURAÇÕES FISCAIS (NFC-e)</a>"
     return f"<html><head>{CSS}</head><body><div class='container-center'><div class='card-center'>{IMG_LOGO_PEQ}<h2>👔 MÓDULO DIRETORIA</h2><div style='display:flex; flex-direction:column; gap:12px; margin-top:20px;'>{botoes}</div><br><a href='/central' style='color:#777; text-decoration:none;'>⬅️ Voltar ao Hub Central</a></div></div></body></html>"
 
 @app.get("/tesouraria", response_class=HTMLResponse)
 async def menu_tesouraria(request: Request):
     role = request.session.get("role")
-    if not role or role not in ["admin", "diretoria", "tesoureiro"]:
-        return RedirectResponse("/central")
+    if not role or role not in ["admin", "diretoria", "tesoureiro"]: return RedirectResponse("/central")
     return f"<html><head>{CSS}</head><body><div class='container-center'><div class='card-center'>{IMG_LOGO_PEQ}<h2>💰 Tesouraria do Clube</h2><p style='color:#888; font-size:18px; margin: 40px 0;'>🚧 Área em Construção 🚧<br><br>As mensalidades e anuidades do clube estarão disponíveis aqui em breve.</p><a href='/central' class='btn-acao btn-dark' style='width:250px; margin:auto;'>⬅️ VOLTAR AO MENU</a></div></div></body></html>"
 
 @app.get("/modulo/{nome}", response_class=HTMLResponse)
@@ -227,8 +205,7 @@ async def modulo_em_construcao(request: Request, nome: str):
     if not request.session.get("user"): return RedirectResponse("/")
     titulos = {"steelgoose": "Steel Goose", "secretaria": "Secretaria", "rp": "Relações Públicas", "ouvidoria": "Ouvidoria"}
     titulo = titulos.get(nome, "Em Construção")
-    return f"<html><head>{CSS}</head><body><div class='container-center'><div class='card-center'>{IMG_LOGO_PEQ}<h2>Módulo {titulo}</h2><p style='color:#888; font-size:18px; margin: 40px 0;'>🚧 Área em Construção 🚧<br><br>As funcionalidades deste setor estão sendo mapeadas para a próxima atualização.</p><a href='/central' class='btn-acao btn-dark' style='width:250px; margin:auto;'>⬅️ VOLTAR AO MENU</a></div></div></body></html>"
-
+    return f"<html><head>{CSS}</head><body><div class='container-center'><div class='card-center'>{IMG_LOGO_PEQ}<h2>Módulo {titulo}</h2><p style='color:#888; font-size:18px; margin: 40px 0;'>🚧 Área em Construção 🚧</p><a href='/central' class='btn-acao btn-dark' style='width:250px; margin:auto;'>⬅️ VOLTAR AO MENU</a></div></div></body></html>"
 
 # ==========================================
 # PAINEL DE COMANDAS DO OLD GOOSE (BAR / PDV)
@@ -315,7 +292,7 @@ async def finalizar_comanda(request: Request, comanda_num: str = Form(...), paga
     return HTMLResponse(f"<script>alert('Conta {comanda_num} fechada!'); window.location.href='/pdv';</script>")
 
 # ==========================================
-# GESTÃO DE ESTOQUE E DASHBOARD (OLD GOOSE)
+# GESTÃO DE ESTOQUE E COMPRAS (OLD GOOSE)
 # ==========================================
 @app.get("/estoque", response_class=HTMLResponse)
 async def tela_estoque(request: Request):
@@ -325,12 +302,37 @@ async def tela_estoque(request: Request):
         prods_db = conn.execute(text("SELECT id, nome, categoria, preco, estoque FROM produtos ORDER BY nome")).fetchall()
         for r in prods_db:
             n_seguro = r.nome.replace('"', '').replace("'", "")
-            acoes = f"<div style='display:flex; gap:5px;'><form action='/att_estoque' method='post' style='margin:0; display:flex;'><input type='hidden' name='id' value='{r.id}'><input type='number' name='q' class='input-padrao' style='width:60px; padding:5px; margin:0;' placeholder='+Qtd' required><button class='btn-acao' style='padding:8px; margin:0;'>➕</button></form><button type='button' class='btn-acao btn-dark' style='padding:8px; margin:0;' onclick='abrirModal({r.id}, \"{n_seguro}\", \"{r.categoria}\", {float(r.preco or 0)})'>✏️</button><form action='/excluir_produto' method='post' style='margin:0;' onsubmit='return confirm(\"Excluir item?\");'><input type='hidden' name='id' value='{r.id}'><button class='btn-acao btn-red' style='padding:8px; margin:0;'>🗑️</button></form></div>"
+            acoes = f"<div style='display:flex; gap:5px;'><button type='button' class='btn-acao' style='padding:8px; margin:0; background:#10b981; color:#000;' onclick='abrirModalEntrada({r.id}, \"{n_seguro}\")' title='Registrar Compra / Entrada'>➕</button><button type='button' class='btn-acao btn-dark' style='padding:8px; margin:0;' onclick='abrirModal({r.id}, \"{n_seguro}\", \"{r.categoria}\", {float(r.preco or 0)})' title='Editar Produto'>✏️</button><form action='/excluir_produto' method='post' style='margin:0;' onsubmit='return confirm(\"Excluir item?\");'><input type='hidden' name='id' value='{r.id}'><button class='btn-acao btn-red' style='padding:8px; margin:0;'>🗑️</button></form></div>"
             linhas += f"<tr><td style='color:#FFF; font-weight:bold;'>{r.nome.upper()}</td><td style='color:{COR_AMARELO};'>R$ {float(r.preco or 0):.2f}</td><td style='color:#FFF; text-align:center;'>{int(r.estoque or 0)} un</td><td>{acoes}</td></tr>"
-    add_form = f"<div style='background:#0A0A0A; padding:20px; border-radius:10px; margin-bottom:20px; border:1px solid {COR_BORDA};'><h3>➕ CADASTRAR PRODUTO NO BAR</h3><form action='/novo_produto' method='post' style='display:flex; flex-wrap:wrap; gap:10px;'><input name='nome' placeholder='Nome da Bebida / Item' class='input-padrao' style='flex:2;' required><select name='cat' class='input-padrao' style='flex:1;'><option value='BEBIDAS'>BEBIDAS</option><option value='ALIMENTOS'>ALIMENTOS</option><option value='VESTUARIO'>VESTUARIO</option></select><input name='preco' placeholder='Preço' step='0.01' type='number' class='input-padrao' style='width:120px;' required><input name='qtd' type='number' placeholder='Qtd' class='input-padrao' style='width:100px;' required><button class='btn-acao' style='width:100%;'>SALVAR NO ESTOQUE</button></form></div>"
+            
+    add_form = f"<div style='display:flex; justify-content:space-between; align-items:center; margin-bottom:15px;'><h3>📦 Produtos</h3><a href='/historico_compras' class='btn-acao btn-dark' style='width:auto; margin:0; padding:10px 15px; font-size:12px;'>📜 VER HISTÓRICO DE COMPRAS</a></div><div style='background:#0A0A0A; padding:20px; border-radius:10px; margin-bottom:20px; border:1px solid {COR_BORDA};'><h3>➕ CADASTRAR NOVO PRODUTO</h3><form action='/novo_produto' method='post' style='display:flex; flex-wrap:wrap; gap:10px;'><input name='nome' placeholder='Nome da Bebida / Item' class='input-padrao' style='flex:2;' required><select name='cat' class='input-padrao' style='flex:1;'><option value='BEBIDAS'>BEBIDAS</option><option value='ALIMENTOS'>ALIMENTOS</option><option value='VESTUARIO'>VESTUARIO</option></select><input name='preco' placeholder='Preço de Venda' step='0.01' type='number' class='input-padrao' style='width:120px;' required><input name='qtd' type='number' placeholder='Qtd Estoque Inicial' class='input-padrao' style='width:150px;' required><button class='btn-acao' style='width:100%;'>SALVAR NO ESTOQUE</button></form></div>"
+    
     modal_edit = f"<div id='editModal' style='display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.8); z-index:1000; align-items:center; justify-content:center;'><div class='card-center' style='position:relative; width:90%; max-width:400px; padding:20px; background:#121214;'><span onclick='fecharModal()' style='position:absolute; top:10px; right:15px; cursor:pointer; font-size:24px; color:#FFF;'>&times;</span><h3 style='margin-top:0;'>✏️ EDITAR PRODUTO</h3><form action='/editar_produto' method='post' style='display:flex; flex-direction:column; gap:10px;'><input type='hidden' name='id' id='edit_id'><input name='nome' id='edit_nome' class='input-padrao' required><select name='cat' id='edit_cat' class='input-padrao' required><option value='BEBIDAS'>BEBIDAS</option><option value='ALIMENTOS'>ALIMENTOS</option><option value='VESTUARIO'>VESTUARIO</option></select><input name='preco' id='edit_preco' type='number' step='0.01' class='input-padrao' required><button class='btn-acao' style='margin-top:10px;'>SALVAR ALTERAÇÕES</button></form></div></div>"
-    js_modal = "<script>function abrirModal(id, nome, cat, preco) { document.getElementById('edit_id').value = id; document.getElementById('edit_nome').value = nome; document.getElementById('edit_cat').value = cat; document.getElementById('edit_preco').value = preco; document.getElementById('editModal').style.display = 'flex'; } function fecharModal() { document.getElementById('editModal').style.display = 'none'; }</script>"
-    return f"<html><head>{CSS}{js_modal}</head><body>{modal_edit}<div class='container-center'><div class='card-center' style='max-width:800px;'>{IMG_LOGO_PEQ}<h2>📦 Estoque</h2>{add_form}<div style='max-height:400px; overflow-y:auto; border:1px solid {COR_BORDA};'><table><tr><th>Produto</th><th>Preço</th><th>Qtd</th><th>Ações</th></tr>{linhas}</table></div><br><a href='/oldgoose' class='btn-acao btn-dark' style='width:200px; margin:auto;'>⬅️ Voltar ao Old Goose</a></div></div></body></html>"
+    
+    modal_entrada = f"""
+    <div id='entradaModal' style='display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.8); z-index:1000; align-items:center; justify-content:center;'>
+        <div class='card-center' style='position:relative; width:90%; max-width:400px; padding:20px; background:#121214; border:1px solid {COR_BORDA};'>
+            <span onclick='fecharModalEntrada()' style='position:absolute; top:10px; right:15px; cursor:pointer; font-size:24px; color:#FFF;'>&times;</span>
+            <h3 style='margin-top:0; color:#10b981;'>📥 REGISTRAR COMPRA</h3>
+            <form action='/att_estoque' method='post' style='display:flex; flex-direction:column; gap:10px;'>
+                <input type='hidden' name='id' id='entrada_id'>
+                <p style='color:#FFF; text-align:left; margin:0;'>Produto: <b id='entrada_nome' style='color:#10b981; text-transform:uppercase;'></b></p>
+                <div>
+                    <label style='font-size:12px; color:#aaa; font-weight:bold;'>QUANTIDADE COMPRADA (UN):</label>
+                    <input name='q' type='number' class='input-padrao' required autocomplete='off'>
+                </div>
+                <div>
+                    <label style='font-size:12px; color:#aaa; font-weight:bold;'>VALOR TOTAL PAGO (R$):</label>
+                    <input name='custo' type='number' step='0.01' class='input-padrao' placeholder='Ex: 150.00' required>
+                </div>
+                <button class='btn-acao' style='background:#10b981; margin-top:10px;'>SALVAR ENTRADA</button>
+            </form>
+        </div>
+    </div>
+    """
+
+    js_modal = "<script>function abrirModal(id, nome, cat, preco) { document.getElementById('edit_id').value = id; document.getElementById('edit_nome').value = nome; document.getElementById('edit_cat').value = cat; document.getElementById('edit_preco').value = preco; document.getElementById('editModal').style.display = 'flex'; } function fecharModal() { document.getElementById('editModal').style.display = 'none'; } function abrirModalEntrada(id, nome) { document.getElementById('entrada_id').value = id; document.getElementById('entrada_nome').innerText = nome; document.getElementById('entradaModal').style.display = 'flex'; } function fecharModalEntrada() { document.getElementById('entradaModal').style.display = 'none'; }</script>"
+    return f"<html><head>{CSS}{js_modal}</head><body>{modal_edit}{modal_entrada}<div class='container-center'><div class='card-center' style='max-width:800px;'>{IMG_LOGO_PEQ}<h2>📦 Estoque</h2>{add_form}<div style='max-height:400px; overflow-y:auto; border:1px solid {COR_BORDA};'><table><tr><th>Produto</th><th>Preço</th><th>Qtd Atual</th><th>Ações</th></tr>{linhas}</table></div><br><a href='/oldgoose' class='btn-acao btn-dark' style='width:200px; margin:auto;'>⬅️ Voltar ao Old Goose</a></div></div></body></html>"
 
 @app.post("/novo_produto")
 async def novo_produto(request: Request):
@@ -345,10 +347,29 @@ async def novo_produto(request: Request):
 async def att_estoque(request: Request):
     if request.session.get("role") not in ["admin", "diretoria", "old_goose"]: return RedirectResponse(url="/central")
     f = await request.form()
+    prod_id = f.get("id")
+    qtd = int(f.get("q", "0"))
+    custo = float(f.get("custo", "0").replace(",", "."))
     try:
-        with engine.begin() as conn: conn.execute(text("UPDATE produtos SET estoque = COALESCE(estoque, 0) + :q WHERE id = :id"), {"id": f.get("id"), "q": int(f.get("q", "0"))})
+        with engine.begin() as conn: 
+            prod = conn.execute(text("SELECT nome FROM produtos WHERE id = :id"), {"id": prod_id}).fetchone()
+            if prod:
+                conn.execute(text("UPDATE produtos SET estoque = COALESCE(estoque, 0) + :q WHERE id = :id"), {"id": prod_id, "q": qtd})
+                conn.execute(text("INSERT INTO historico_estoque (produto_nome, qtd_adicionada, valor_custo, data_entrada) VALUES (:n, :q, :c, CURRENT_DATE)"), {"n": prod.nome, "q": qtd, "c": custo})
     except: pass
     return RedirectResponse(url="/estoque", status_code=303)
+
+@app.get("/historico_compras", response_class=HTMLResponse)
+async def historico_compras(request: Request):
+    if request.session.get("role") not in ["admin", "diretoria", "old_goose"]: return RedirectResponse(url="/central")
+    linhas = ""
+    with engine.connect() as conn:
+        hist = conn.execute(text("SELECT produto_nome, qtd_adicionada, valor_custo, data_entrada FROM historico_estoque ORDER BY id DESC LIMIT 100")).fetchall()
+        for r in hist:
+            custo_unit = float(r.valor_custo)/r.qtd_adicionada if r.qtd_adicionada > 0 else 0
+            linhas += f"<tr><td style='color:#FFF; font-weight:bold;'>{r.produto_nome}</td><td style='color:{COR_AMARELO}; text-align:center;'>{r.qtd_adicionada}</td><td style='color:#FFF; text-align:right;'>R$ {float(r.valor_custo):.2f}<br><small style='color:#888;'>R$ {custo_unit:.2f}/un</small></td><td style='color:#888; text-align:right;'>{r.data_entrada.strftime('%d/%m/%Y') if hasattr(r.data_entrada, 'strftime') else str(r.data_entrada)}</td></tr>"
+            
+    return f"<html><head>{CSS}</head><body><div class='container-center'><div class='card-center' style='max-width:800px;'>{IMG_LOGO_PEQ}<h2>📜 Histórico de Compras</h2><div style='max-height:500px; overflow-y:auto; border:1px solid {COR_BORDA};'><table><thead style='background:#0A0A0A; position:sticky; top:0;'><tr><th>Produto</th><th style='text-align:center;'>Qtd Comprada</th><th style='text-align:right;'>Custo Total</th><th style='text-align:right;'>Data</th></tr></thead><tbody>{linhas if linhas else '<tr><td colspan=\"4\" style=\"text-align:center; color:#777;\">Nenhum registro encontrado.</td></tr>'}</tbody></table></div><br><a href='/estoque' class='btn-acao btn-dark' style='width:200px; margin:auto;'>⬅️ Voltar ao Estoque</a></div></div></body></html>"
 
 @app.post("/editar_produto")
 async def editar_produto(request: Request):
