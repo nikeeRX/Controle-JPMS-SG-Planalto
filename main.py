@@ -6,15 +6,20 @@ from datetime import datetime, date
 import os
 import shutil
 import urllib.parse
+import random
+import smtplib
+from email.mime.text import MIMEText
 
 app = FastAPI()
 app.add_middleware(SessionMiddleware, secret_key="jpms_solucoes_gestao_2026_seguro")
 
+# Conexão com o Banco de Dados
 DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://postgres:GNlZnHiuKAcFnpgXhwILfigqKCNkaHqx@interchange.proxy.rlwy.net:44559/railway")
 engine = create_engine(DATABASE_URL, pool_pre_ping=True)
 UPLOAD_DIR = "comprovantes"
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
+# Geração de Tabelas Iniciais
 with engine.begin() as conn:
     conn.execute(text("""
         CREATE TABLE IF NOT EXISTS usuarios (id SERIAL PRIMARY KEY, username TEXT UNIQUE NOT NULL, password TEXT NOT NULL, role TEXT NOT NULL, status TEXT DEFAULT 'ATIVO', email TEXT);
@@ -28,22 +33,14 @@ with engine.begin() as conn:
         CREATE TABLE IF NOT EXISTS fila_impressao (id SERIAL PRIMARY KEY, conteudo TEXT, status TEXT DEFAULT 'PENDENTE', data_criacao TIMESTAMP DEFAULT CURRENT_TIMESTAMP);
     """))
 
-MIGRACOES = [
-    "ALTER TABLE comandas ALTER COLUMN status SET DEFAULT 'ABERTA';",
-    "ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'ATIVO';",
-    "ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS email TEXT;",
-    "ALTER TABLE historico_estoque ADD COLUMN IF NOT EXISTS valor_custo DECIMAL(10,2) DEFAULT 0.00;",
-    "ALTER TABLE historico_estoque ADD COLUMN IF NOT EXISTS nota_fiscal TEXT;"
-]
-for mig in MIGRACOES:
-    try:
-        with engine.begin() as conn: conn.execute(text(mig))
-    except Exception: pass
-
+# Admin Padrão
 try:
     with engine.begin() as conn: conn.execute(text("INSERT INTO usuarios (username, password, role, status) VALUES ('admin', '1234', 'admin', 'ATIVO') ON CONFLICT (username) DO NOTHING"))
 except: pass
 
+# ==========================================
+# CONSTANTES VISUAIS E FUNÇÃO DE ACESSO
+# ==========================================
 COR_FUNDO, COR_CARD, COR_AMARELO, COR_VERMELHO, COR_TEXTO, COR_BORDA, COR_INPUT = "#121214", "#000000", "#F3BA16", "#C82828", "#E0E0E0", "#222225", "#141416"
 IMG_URL = "/logo.png"
 
@@ -51,6 +48,29 @@ def check_access(role_str, allowed_roles):
     if not role_str: return False
     user_roles = [r.strip().lower() for r in role_str.split(",")]
     return any(r in user_roles for r in allowed_roles)
+
+# ==========================================
+# FUNÇÃO DE ENVIO DE E-MAIL (RECUPERAÇÃO)
+# ==========================================
+def enviar_email_recuperacao(destinatario, nova_senha):
+    remetente = os.getenv("EMAIL_REMETENTE")
+    senha_app = os.getenv("EMAIL_SENHA")
+    
+    if not remetente or not senha_app:
+        print(f"\n[ALERTA] E-mail nao configurado no Railway.\nSimulacao - A nova senha de {destinatario} e: {nova_senha}\n")
+        return
+    try:
+        msg = MIMEText(f"Salve irmão!\n\nSua nova senha de acesso provisória ao sistema Steel Goose é: {nova_senha}\n\nFaça o login e guarde-a com segurança.\n\nForte abraço,\nDiretoria Steel Goose.")
+        msg['Subject'] = 'Recuperação de Senha - Steel Goose'
+        msg['From'] = remetente
+        msg['To'] = destinatario
+
+        server = smtplib.SMTP_SSL('smtp.gmail.com', 465)
+        server.login(remetente, senha_app)
+        server.sendmail(remetente, destinatario, msg.as_string())
+        server.quit()
+    except Exception as e:
+        print(f"Erro ao enviar email: {e}")
 
 CSS = f"""
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
@@ -90,8 +110,30 @@ async def exibir_logo():
         if os.path.exists(filename): return FileResponse(filename)
     return Response(status_code=404)
 
+# ==========================================
+# ROTAS DE LOGIN E CADASTRO
+# ==========================================
 @app.get("/", response_class=HTMLResponse)
-async def login_page(): return f"<html><head>{CSS}</head><body><div class='container-center'><div class='card-center'>{IMG_LOGO_PEQ}<h2>PORTARIA DIGITAL</h2><form action='/login' method='post'><input class='input-padrao' name='user' placeholder='Usuário' required><input class='input-padrao' name='pw' type='password' placeholder='Senha' required><button class='btn-acao' style='padding:15px; font-size:18px; margin-top: 15px;'>ENTRAR NO SISTEMA</button></form><hr style='border: 0; border-top: 1px dashed {COR_BORDA}; margin: 20px 0;'><a href='/cadastro' class='btn-acao btn-dark' style='text-decoration:none;'>SOLICITAR ACESSO (CADASTRO)</a></div></div></body></html>"
+async def login_page(): 
+    return f"<html><head>{CSS}</head><body><div class='container-center'><div class='card-center'>{IMG_LOGO_PEQ}<h2>PORTARIA DIGITAL</h2><form action='/login' method='post'><input class='input-padrao' name='user' placeholder='Usuário' required><input class='input-padrao' name='pw' type='password' placeholder='Senha' required><button class='btn-acao' style='padding:15px; font-size:18px; margin-top: 15px;'>ENTRAR NO SISTEMA</button></form><div style='margin-top:15px; margin-bottom:5px;'><a href='/esqueci_senha' style='color:#888; font-size:14px; text-decoration:none;'>Esqueci minha senha</a></div><hr style='border: 0; border-top: 1px dashed {COR_BORDA}; margin: 20px 0;'><a href='/cadastro' class='btn-acao btn-dark' style='text-decoration:none;'>SOLICITAR ACESSO (CADASTRO)</a></div></div></body></html>"
+
+@app.get("/esqueci_senha", response_class=HTMLResponse)
+async def esqueci_senha_tela():
+    return f"<html><head>{CSS}</head><body><div class='container-center'><div class='card-center'>{IMG_LOGO_PEQ}<h2>RECUPERAR SENHA</h2><p style='color:#888; font-size:14px;'>Digite o e-mail vinculado à sua conta.</p><form action='/recuperar_senha' method='post' style='text-align:left;'><input class='input-padrao' name='email' type='email' placeholder='Seu e-mail cadastrado' required autocomplete='off'><button class='btn-acao' style='padding:15px; font-size:16px; margin-top: 20px;'>ENVIAR NOVA SENHA</button></form><a href='/' style='color:{COR_AMARELO}; font-size:14px; text-decoration:none;'>⬅️ Voltar ao Login</a></div></div></body></html>"
+
+@app.post("/recuperar_senha")
+async def recuperar_senha(email: str = Form(...)):
+    email_limpo = email.strip().lower()
+    nova_senha = str(random.randint(100000, 999999))
+    
+    with engine.begin() as conn:
+        user = conn.execute(text("SELECT id FROM usuarios WHERE email = :e"), {"e": email_limpo}).fetchone()
+        if not user:
+            return HTMLResponse(f"<script>alert('E-mail não encontrado no sistema!'); window.location.href='/esqueci_senha';</script>")
+        conn.execute(text("UPDATE usuarios SET password = :p WHERE id = :id"), {"p": nova_senha, "id": user[0]})
+        
+    enviar_email_recuperacao(email_limpo, nova_senha)
+    return HTMLResponse("<script>alert('Sua nova senha provisória foi enviada para o seu e-mail (verifique o spam).'); window.location.href='/';</script>")
 
 @app.get("/cadastro", response_class=HTMLResponse)
 async def tela_cadastro(): return f"<html><head>{CSS}</head><body><div class='container-center'><div class='card-center'>{IMG_LOGO_PEQ}<h2>CADASTRO DE INTEGRANTE</h2><p style='color:#888; font-size:14px;'>Seu acesso passará por aprovação da Diretoria.</p><form action='/registrar' method='post' style='text-align:left;'><input class='input-padrao' name='u' placeholder='Login' required autocomplete='off'><input class='input-padrao' name='e' type='email' placeholder='E-mail' required autocomplete='off'><input class='input-padrao' name='p' type='password' placeholder='Senha' required><button class='btn-acao' style='padding:15px; font-size:18px; margin-top: 20px;'>ENVIAR SOLICITAÇÃO</button></form><a href='/' style='color:{COR_AMARELO}; font-size:14px; text-decoration:none;'>⬅️ Voltar ao Login</a></div></div></body></html>"
@@ -158,7 +200,7 @@ async def modulo_em_construcao(request: Request, nome: str):
     return f"<html><head>{CSS}</head><body><div class='container-center'><div class='card-center'>{IMG_LOGO_PEQ}<h2>Módulo {nome.capitalize()}</h2><p style='color:#888; font-size:18px; margin: 40px 0;'>🚧 Área em Construção 🚧</p><a href='/central' class='btn-acao btn-dark' style='width:250px; margin:auto;'>⬅️ VOLTAR AO MENU</a></div></div></body></html>"
 
 # ==========================================
-# MÓDULO SECRETARIA E LOJA DE MATERIAIS
+# MÓDULO SECRETARIA (CONTROLE E LOJA)
 # ==========================================
 @app.get("/secretaria", response_class=HTMLResponse)
 async def menu_secretaria(request: Request):
@@ -224,7 +266,6 @@ async def menu_tesouraria(request: Request):
     with engine.begin() as conn:
         existe_caixinha = conn.execute(text("SELECT id FROM caixinha WHERE username = :u AND mes_ano = :m"), {"u": user, "m": mes_atual}).fetchone()
         if not existe_caixinha: conn.execute(text("INSERT INTO caixinha (username, mes_ano, valor, status) VALUES (:u, :m, 50.00, 'PENDENTE')"), {"u": user, "m": mes_atual})
-        
         minhas_caixinhas = conn.execute(text("SELECT id, mes_ano, valor, status FROM caixinha WHERE username = :u ORDER BY id DESC"), {"u": user}).fetchall()
         minhas_pendencias = conn.execute(text("SELECT id, item_nome, valor_total, status, data_pedido FROM pedidos_secretaria WHERE username = :u ORDER BY id DESC"), {"u": user}).fetchall()
         
@@ -341,14 +382,6 @@ async def menu_oldgoose(request: Request):
     botoes += "<a href='/baixar_conector' class='btn-acao btn-dark' style='padding: 15px;'>🖨️ BAIXAR CONECTOR DE IMPRESSORA</a>"
     return f"<html><head>{CSS}</head><body><div class='container-center'><div class='card-center'>{IMG_LOGO_PEQ}<h2>🦉 MÓDULO OLD GOOSE (BAR)</h2><div style='display:flex; flex-direction:column; gap:12px; margin-top:20px;'>{botoes}</div><br><a href='/central' style='color:#777; text-decoration:none;'>⬅️ Voltar ao Hub Central</a></div></div></body></html>"
 
-@app.get("/diretoria", response_class=HTMLResponse)
-async def menu_diretoria(request: Request):
-    role = request.session.get("role")
-    if not check_access(role, ["admin", "diretoria"]): return RedirectResponse("/central")
-    botoes = "<a href='/usuarios' class='btn-acao' style='font-size: 18px; padding: 20px;'>👥 CONTROLE DE MEMBROS E ACESSOS</a>"
-    if check_access(role, ["admin"]): botoes += "<a href='/config_fiscal' class='btn-acao btn-dark' style='padding: 20px;'>⚙️ CONFIGURAÇÕES FISCAIS (NFC-e)</a>"
-    return f"<html><head>{CSS}</head><body><div class='container-center'><div class='card-center'>{IMG_LOGO_PEQ}<h2>👔 MÓDULO DIRETORIA</h2><div style='display:flex; flex-direction:column; gap:12px; margin-top:20px;'>{botoes}</div><br><a href='/central' style='color:#777; text-decoration:none;'>⬅️ Voltar ao Hub Central</a></div></div></body></html>"
-
 @app.get("/pdv", response_class=HTMLResponse)
 async def pdv_painel(request: Request):
     if not check_access(request.session.get("role"), ["admin", "diretoria", "old_goose", "caixa", "tesoureiro"]): return RedirectResponse("/central")
@@ -450,7 +483,6 @@ async def tela_estoque(request: Request):
     add_form = f"<div style='display:flex; justify-content:space-between; align-items:center; margin-bottom:15px;'><h3>📦 Produtos</h3><a href='/historico_compras' class='btn-acao btn-dark' style='width:auto; margin:0; padding:10px 15px; font-size:12px;'>📜 HISTÓRICO DE COMPRAS</a></div><div style='background:#0A0A0A; padding:20px; border-radius:10px; margin-bottom:20px; border:1px solid {COR_BORDA};'><h3>➕ CADASTRAR PRODUTO NO BAR</h3><form action='/novo_produto' method='post' style='display:flex; flex-wrap:wrap; gap:10px;'><input name='nome' placeholder='Nome da Bebida' class='input-padrao' style='flex:2;' required><select name='cat' class='input-padrao' style='flex:1;'><option value='BEBIDAS'>BEBIDAS</option><option value='ALIMENTOS'>ALIMENTOS</option><option value='OUTROS'>OUTROS</option></select><input name='preco' placeholder='Preço de Venda' step='0.01' type='number' class='input-padrao' style='width:120px;' required><input name='qtd' type='number' placeholder='Qtd Estoque Inicial' class='input-padrao' style='width:150px;' required><button class='btn-acao' style='width:100%;'>SALVAR NO ESTOQUE</button></form></div>"
     modal_edit = f"<div id='editModal' style='display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.8); z-index:1000; align-items:center; justify-content:center;'><div class='card-center' style='position:relative; width:90%; max-width:400px; padding:20px; background:#121214;'><span onclick='document.getElementById(\"editModal\").style.display=\"none\"' style='position:absolute; top:10px; right:15px; cursor:pointer; font-size:24px; color:#FFF;'>&times;</span><h3 style='margin-top:0;'>✏️ EDITAR PRODUTO</h3><form action='/editar_produto' method='post' style='display:flex; flex-direction:column; gap:10px;'><input type='hidden' name='id' id='edit_id'><input name='nome' id='edit_nome' class='input-padrao' required><select name='cat' id='edit_cat' class='input-padrao' required><option value='BEBIDAS'>BEBIDAS</option><option value='ALIMENTOS'>ALIMENTOS</option><option value='OUTROS'>OUTROS</option></select><input name='preco' id='edit_preco' type='number' step='0.01' class='input-padrao' required><button class='btn-acao' style='margin-top:10px;'>SALVAR ALTERAÇÕES</button></form></div></div>"
     
-    # MODAL DE ENTRADA ATUALIZADO COM UPLOAD DA NOTA FISCAL
     modal_entrada = f"""
     <div id='entradaModal' style='display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.8); z-index:1000; align-items:center; justify-content:center;'>
         <div class='card-center' style='position:relative; width:90%; max-width:400px; padding:20px; background:#121214; border:1px solid {COR_BORDA};'>
@@ -705,3 +737,20 @@ async def excluir_usuario(request: Request):
         with engine.begin() as conn: conn.execute(text("DELETE FROM usuarios WHERE id = :id AND username != 'admin'"), {"id": f.get("id")})
     except: pass
     return RedirectResponse(url="/usuarios", status_code=303)
+
+@app.get("/api/pendentes")
+async def api_pendentes():
+    with engine.connect() as conn:
+        r = conn.execute(text("SELECT id, conteudo FROM fila_impressao WHERE status = 'PENDENTE' LIMIT 1")).fetchone()
+        return {"jobs": [{"id": r[0], "conteudo": r[1]}]} if r else {"jobs": []}
+
+@app.post("/api/impresso/{j_id}")
+async def api_impresso(j_id: int):
+    with engine.begin() as conn: conn.execute(text("UPDATE fila_impressao SET status='IMPRESSO' WHERE id=:i"), {"i": j_id})
+    return {"ok": True}
+
+@app.get("/baixar_conector")
+async def baixar_conector():
+    base_url = "http://localhost:8000" 
+    script_content = f"import time\nimport requests\nimport win32print\n\nAPI_URL = '{base_url}'\n\ndef imprimir_ticket(texto):\n    impressora_padrao = win32print.GetDefaultPrinter()\n    try:\n        hPrinter = win32print.OpenPrinter(impressora_padrao)\n        hJob = win32print.StartDocPrinter(hPrinter, 1, ('Ticket Steel Goose', None, 'RAW'))\n        win32print.StartPagePrinter(hPrinter)\n        win32print.WritePrinter(hPrinter, texto.encode('utf-8'))\n        win32print.WritePrinter(hPrinter, b'\\n\\n\\n\\n\\x1B\\x6D')\n        win32print.EndPagePrinter(hPrinter)\n        win32print.EndDocPrinter(hPrinter)\n        win32print.ClosePrinter(hPrinter)\n    except Exception: pass\n\nwhile True:\n    try:\n        resposta = requests.get(f'{{API_URL}}/api/pendentes', timeout=5)\n        if resposta.status_code == 200:\n            dados = resposta.json()\n            for job in dados.get('jobs', []):\n                imprimir_ticket(job['conteudo'])\n                requests.post(f'{{API_URL}}/api/impresso/{{job[\"id\"]}}', timeout=5)\n    except: pass\n    time.sleep(2)"
+    return Response(content=script_content, media_type="text/x-python", headers={"Content-Disposition": "attachment; filename=conector_impressao.py"})
