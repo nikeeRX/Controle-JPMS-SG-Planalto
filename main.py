@@ -10,11 +10,13 @@ import urllib.parse
 app = FastAPI()
 app.add_middleware(SessionMiddleware, secret_key="jpms_solucoes_gestao_2026_seguro")
 
+# Conexão com o Banco de Dados
 DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://postgres:GNlZnHiuKAcFnpgXhwILfigqKCNkaHqx@interchange.proxy.rlwy.net:44559/railway")
 engine = create_engine(DATABASE_URL, pool_pre_ping=True)
 UPLOAD_DIR = "comprovantes"
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
+# Geração de Tabelas Iniciais
 with engine.begin() as conn:
     conn.execute(text("""
         CREATE TABLE IF NOT EXISTS usuarios (id SERIAL PRIMARY KEY, username TEXT UNIQUE NOT NULL, password TEXT NOT NULL, role TEXT NOT NULL, status TEXT DEFAULT 'ATIVO', email TEXT);
@@ -28,12 +30,22 @@ with engine.begin() as conn:
         CREATE TABLE IF NOT EXISTS fila_impressao (id SERIAL PRIMARY KEY, conteudo TEXT, status TEXT DEFAULT 'PENDENTE', data_criacao TIMESTAMP DEFAULT CURRENT_TIMESTAMP);
     """))
 
+# Admin Padrão
 try:
     with engine.begin() as conn: conn.execute(text("INSERT INTO usuarios (username, password, role, status) VALUES ('admin', '1234', 'admin', 'ATIVO') ON CONFLICT (username) DO NOTHING"))
 except: pass
 
+# ==========================================
+# CONSTANTES VISUAIS E FUNÇÃO DE ACESSO
+# ==========================================
 COR_FUNDO, COR_CARD, COR_AMARELO, COR_VERMELHO, COR_TEXTO, COR_BORDA, COR_INPUT = "#121214", "#000000", "#F3BA16", "#C82828", "#E0E0E0", "#222225", "#141416"
 IMG_URL = "/logo.png"
+
+# FUNÇÃO CORRIGIDA DE MULTI-CARGOS (É ela que garante que o sistema não trave com permissões acumuladas)
+def check_access(role_str, allowed_roles):
+    if not role_str: return False
+    user_roles = [r.strip().lower() for r in role_str.split(",")]
+    return any(r in user_roles for r in allowed_roles)
 
 CSS = f"""
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
@@ -67,18 +79,15 @@ CSS = f"""
 """
 IMG_LOGO_PEQ = f"<div style='display:flex; justify-content:center; margin-bottom:15px;'><img src='{IMG_URL}' class='logo-peq'></div>"
 
-# FUNÇÃO DE CONTROLE DE PERMISSÕES ACUMULATIVAS
-def check_access(role_str, allowed_roles):
-    if not role_str: return False
-    user_roles = [r.strip() for r in role_str.split(",")]
-    return any(r in user_roles for r in allowed_roles)
-
 @app.get("/logo.png")
 async def exibir_logo(): 
     for filename in ["logo.jpg", "stell goose.jpeg", "logo.png"]:
         if os.path.exists(filename): return FileResponse(filename)
     return Response(status_code=404)
 
+# ==========================================
+# ROTAS DE LOGIN E CADASTRO
+# ==========================================
 @app.get("/", response_class=HTMLResponse)
 async def login_page(): return f"<html><head>{CSS}</head><body><div class='container-center'><div class='card-center'>{IMG_LOGO_PEQ}<h2>PORTARIA DIGITAL</h2><form action='/login' method='post'><input class='input-padrao' name='user' placeholder='Usuário' required><input class='input-padrao' name='pw' type='password' placeholder='Senha' required><button class='btn-acao' style='padding:15px; font-size:18px; margin-top: 15px;'>ENTRAR NO SISTEMA</button></form><hr style='border: 0; border-top: 1px dashed {COR_BORDA}; margin: 20px 0;'><a href='/cadastro' class='btn-acao btn-dark' style='text-decoration:none;'>SOLICITAR ACESSO (CADASTRO)</a></div></div></body></html>"
 
@@ -147,7 +156,7 @@ async def modulo_em_construcao(request: Request, nome: str):
     return f"<html><head>{CSS}</head><body><div class='container-center'><div class='card-center'>{IMG_LOGO_PEQ}<h2>Módulo {nome.capitalize()}</h2><p style='color:#888; font-size:18px; margin: 40px 0;'>🚧 Área em Construção 🚧</p><a href='/central' class='btn-acao btn-dark' style='width:250px; margin:auto;'>⬅️ VOLTAR AO MENU</a></div></div></body></html>"
 
 # ==========================================
-# MÓDULO SECRETARIA E LOJA DE MATERIAIS
+# MÓDULO SECRETARIA (CONTROLE E LOJA)
 # ==========================================
 @app.get("/secretaria", response_class=HTMLResponse)
 async def menu_secretaria(request: Request):
@@ -159,7 +168,7 @@ async def menu_secretaria(request: Request):
         itens_db = conn.execute(text("SELECT id, codigo, descricao, preco, estoque FROM secretaria_itens ORDER BY descricao")).fetchall()
         for r in itens_db:
             btn = f"<form action='/secretaria/excluir' method='post' style='margin:0;' onsubmit='return confirm(\"Excluir item?\");'><input type='hidden' name='id' value='{r.id}'><button class='btn-acao btn-red' style='padding:5px; margin:0;'>🗑️</button></form>"
-            linhas_itens += f"<tr><td><b style='color:#FFF;'>{r.descricao}</b><br><small style='color:#888;'>Cód: {r.codigo}</small></td><td style='color:{COR_AMARELO};'>R$ {float(r.preco):.2f}</td><td style='text-align:center;'>{r.estoque} un</td><td>{btn}</td></tr>"
+            linhas_itens += f"<tr><td><b style='color:#FFF;'>{r.descricao}</b><br><small style='color:#888;'>Cód: {r.codigo}</small></td><td style='color:{COR_AMARELO};'>R$ {float(r.preco or 0):.2f}</td><td style='text-align:center;'>{int(r.estoque or 0)} un</td><td>{btn}</td></tr>"
             
     painel_admin = f"<div style='background:{COR_INPUT}; padding:20px; border-radius:10px; margin-bottom:20px; border:1px solid {COR_BORDA};'><h3>➕ ADICIONAR MATERIAL</h3><form action='/secretaria/novo_item' method='post' style='display:flex; flex-wrap:wrap; gap:10px;'><input name='descricao' placeholder='Descrição (Ex: Camisa Oficial)' class='input-padrao' style='flex:2;' required><input name='preco' placeholder='Valor R$' step='0.01' type='number' class='input-padrao' style='width:120px;' required><input name='estoque' type='number' placeholder='Qtd' class='input-padrao' style='width:100px;' required><button class='btn-acao' style='width:100%;'>SALVAR ITEM</button></form></div>"
         
@@ -173,7 +182,7 @@ async def secretaria_loja(request: Request):
         itens_db = conn.execute(text("SELECT id, codigo, descricao, preco, estoque FROM secretaria_itens ORDER BY descricao")).fetchall()
         for r in itens_db:
             btn = f"<form action='/secretaria/solicitar' method='post' style='margin:0;'><input type='hidden' name='id' value='{r.id}'><button class='btn-acao' style='padding:5px; margin:0; font-size:12px;' {'disabled' if r.estoque <= 0 else ''}>{'SOLICITAR' if r.estoque > 0 else 'ESGOTADO'}</button></form>"
-            linhas_itens += f"<tr><td><b style='color:#FFF;'>{r.descricao}</b></td><td style='color:{COR_AMARELO};'>R$ {float(r.preco):.2f}</td><td>{btn}</td></tr>"
+            linhas_itens += f"<tr><td><b style='color:#FFF;'>{r.descricao}</b></td><td style='color:{COR_AMARELO};'>R$ {float(r.preco or 0):.2f}</td><td>{btn}</td></tr>"
     return f"<html><head>{CSS}</head><body><div class='container-center'><div class='card-center' style='max-width:800px;'>{IMG_LOGO_PEQ}<h2>🛒 SOLICITAÇÃO DE MATERIAIS</h2><p style='color:#888; font-size:14px;'>Ao solicitar, a pendência será lançada na sua Tesouraria.</p><div style='max-height:400px; overflow-y:auto; border:1px solid {COR_BORDA}; margin-top:20px;'><table><tr><th>Item Disponível</th><th>Preço</th><th>Ação</th></tr>{linhas_itens if linhas_itens else '<tr><td colspan=3 style=text-align:center;color:#777>Nenhum item disponível na lojinha.</td></tr>'}</table></div><br><a href='/central' class='btn-acao btn-dark' style='width:250px; margin:auto;'>⬅️ Voltar ao Menu</a></div></div></body></html>"
 
 @app.post("/secretaria/novo_item")
@@ -219,14 +228,15 @@ async def menu_tesouraria(request: Request):
     linhas_caixa = ""
     for c in minhas_caixinhas:
         cls_status = "status-pendente" if c.status == 'PENDENTE' else "status-analise" if c.status == 'EM ANÁLISE' else "status-pago"
-        btn = f"<button class='btn-acao' style='padding:5px; font-size:12px; margin:0;' onclick='abrirModalPgto(\"caixinha\", {c.id}, {float(c.valor)})'>PAGAR</button>" if c.status == 'PENDENTE' else ""
-        linhas_caixa += f"<tr><td><b style='color:#FFF;'>{c.mes_ano}</b></td><td style='color:{COR_AMARELO};'>R$ {float(c.valor):.2f}</td><td class='{cls_status}'>{c.status}</td><td>{btn}</td></tr>"
+        btn = f"<button class='btn-acao' style='padding:5px; font-size:12px; margin:0;' onclick='abrirModalPgto(\"caixinha\", {c.id}, {float(c.valor or 0)})'>PAGAR</button>" if c.status == 'PENDENTE' else ""
+        linhas_caixa += f"<tr><td><b style='color:#FFF;'>{c.mes_ano}</b></td><td style='color:{COR_AMARELO};'>R$ {float(c.valor or 0):.2f}</td><td class='{cls_status}'>{c.status}</td><td>{btn}</td></tr>"
 
     linhas_pend = ""
     for p in minhas_pendencias:
         cls_status = "status-pendente" if p.status == 'PENDENTE' else "status-analise" if p.status == 'EM ANÁLISE' else "status-pago"
-        btn = f"<button class='btn-acao' style='padding:5px; font-size:12px; margin:0;' onclick='abrirModalPgto(\"pedido\", {p.id}, {float(p.valor_total)})'>PAGAR</button>" if p.status == 'PENDENTE' else ""
-        linhas_pend += f"<tr><td><b style='color:#FFF;'>{p.item_nome}</b><br><small style='color:#888;'>{p.data_pedido.strftime('%d/%m')}</small></td><td style='color:{COR_AMARELO};'>R$ {float(p.valor_total):.2f}</td><td class='{cls_status}'>{p.status}</td><td>{btn}</td></tr>"
+        data_formatada = p.data_pedido.strftime('%d/%m') if hasattr(p.data_pedido, 'strftime') else str(p.data_pedido)
+        btn = f"<button class='btn-acao' style='padding:5px; font-size:12px; margin:0;' onclick='abrirModalPgto(\"pedido\", {p.id}, {float(p.valor_total or 0)})'>PAGAR</button>" if p.status == 'PENDENTE' else ""
+        linhas_pend += f"<tr><td><b style='color:#FFF;'>{p.item_nome}</b><br><small style='color:#888;'>{data_formatada}</small></td><td style='color:{COR_AMARELO};'>R$ {float(p.valor_total or 0):.2f}</td><td class='{cls_status}'>{p.status}</td><td>{btn}</td></tr>"
 
     painel_admin = ""
     if check_access(role, ["admin", "diretoria", "tesoureiro"]):
@@ -277,7 +287,7 @@ async def tesouraria_aprovar(request: Request):
         for r in cx + pd:
             btn_ap = f"<form action='/tesouraria/processar' method='post' style='margin:0;'><input type='hidden' name='t' value='{r.tipo}'><input type='hidden' name='i' value='{r.id}'><input type='hidden' name='st' value='PAGO'><button class='btn-acao btn-green' style='padding:5px; margin:0;'>✔️ APROVAR</button></form>"
             btn_re = f"<form action='/tesouraria/processar' method='post' style='margin:0;'><input type='hidden' name='t' value='{r.tipo}'><input type='hidden' name='i' value='{r.id}'><input type='hidden' name='st' value='PENDENTE'><button class='btn-acao btn-red' style='padding:5px; margin:0;'>❌ RECUSAR</button></form>"
-            linhas += f"<tr><td><b style='color:#FFF; text-transform:uppercase;'>{r.username}</b><br><small style='color:#888;'>{r.tipo.upper()} - {r.ref}</small></td><td style='color:{COR_AMARELO};'>R$ {float(r.valor):.2f}</td><td><a href='/comprovantes/{r.comprovante}' target='_blank' style='color:#0ea5e9; text-decoration:none; font-weight:bold;'>Ver Anexo 👁️</a></td><td><div style='display:flex;gap:5px;'>{btn_ap}{btn_re}</div></td></tr>"
+            linhas += f"<tr><td><b style='color:#FFF; text-transform:uppercase;'>{r.username}</b><br><small style='color:#888;'>{r.tipo.upper()} - {r.ref}</small></td><td style='color:{COR_AMARELO};'>R$ {float(r.valor or 0):.2f}</td><td><a href='/comprovantes/{r.comprovante}' target='_blank' style='color:#0ea5e9; text-decoration:none; font-weight:bold;'>Ver Anexo 👁️</a></td><td><div style='display:flex;gap:5px;'>{btn_ap}{btn_re}</div></td></tr>"
     return f"<html><head>{CSS}</head><body><div class='container-center'><div class='card-center' style='max-width:850px;'>{IMG_LOGO_PEQ}<h2>✅ Aprovar Pagamentos</h2><div style='max-height:400px; overflow-y:auto; border:1px solid {COR_BORDA};'><table><tr><th>Membro / Ref</th><th>Valor</th><th>Comprovante</th><th>Ações</th></tr>{linhas if linhas else '<tr><td colspan=4 style=text-align:center;color:#777>Nenhum pagamento pendente de análise.</td></tr>'}</table></div><br><a href='/tesouraria' class='btn-acao btn-dark' style='width:200px; margin:auto;'>⬅️ Voltar</a></div></div></body></html>"
 
 @app.get("/comprovantes/{filename}")
@@ -300,19 +310,27 @@ async def tesouraria_processar(request: Request, t: str = Form(...), i: int = Fo
 async def relatorio_geral(request: Request):
     if not check_access(request.session.get("role"), ["admin", "diretoria", "tesoureiro"]): return RedirectResponse("/central")
     with engine.connect() as conn:
-        f_bar = conn.execute(text("SELECT SUM(total_conta) as t FROM comandas WHERE status = 'FECHADA'")).fetchone().t or 0
-        f_cx = conn.execute(text("SELECT SUM(valor) as t FROM caixinha WHERE status = 'PAGO'")).fetchone().t or 0
-        f_sec = conn.execute(text("SELECT SUM(valor_total) as t FROM pedidos_secretaria WHERE status = 'PAGO'")).fetchone().t or 0
-        tot_entradas = float(f_bar) + float(f_cx) + float(f_sec)
-    return f"<html><head>{CSS}</head><body><div class='container-center'><div class='card-center' style='max-width:800px;'>{IMG_LOGO_PEQ}<h2>📊 RELATÓRIO GERAL (FACÇÃO)</h2><div class='grid-dash'><div class='card-kpi' style='border-left-color:#10b981;'><h3>Total de Entradas (Líquido)</h3><p style='color:#10b981;'>R$ {tot_entradas:.2f}</p></div></div><div style='display:flex; justify-content:space-between; flex-wrap:wrap; gap:10px; margin-bottom:20px;'><div style='background:#111; padding:15px; border-radius:8px; border-left:4px solid {COR_AMARELO}; flex:1;'><b>🍺 OLD GOOSE (BAR):</b><br><span style='color:#FFF; font-size:18px;'>R$ {float(f_bar):.2f}</span></div><div style='background:#111; padding:15px; border-radius:8px; border-left:4px solid {COR_AMARELO}; flex:1;'><b>💵 CAIXINHAS PAGAS:</b><br><span style='color:#FFF; font-size:18px;'>R$ {float(f_cx):.2f}</span></div><div style='background:#111; padding:15px; border-radius:8px; border-left:4px solid {COR_AMARELO}; flex:1;'><b>👕 MATERIAIS (SECRETARIA):</b><br><span style='color:#FFF; font-size:18px;'>R$ {float(f_sec):.2f}</span></div></div><br><a href='/tesouraria' class='btn-acao btn-dark' style='width:250px; margin:auto;'>⬅️ Voltar à Tesouraria</a></div></div></body></html>"
+        f_bar = conn.execute(text("SELECT SUM(total_conta) as t FROM comandas WHERE status = 'FECHADA'")).fetchone()
+        f_bar_val = float(f_bar.t) if f_bar and f_bar.t else 0.0
+        
+        f_cx = conn.execute(text("SELECT SUM(valor) as t FROM caixinha WHERE status = 'PAGO'")).fetchone()
+        f_cx_val = float(f_cx.t) if f_cx and f_cx.t else 0.0
+        
+        f_sec = conn.execute(text("SELECT SUM(valor_total) as t FROM pedidos_secretaria WHERE status = 'PAGO'")).fetchone()
+        f_sec_val = float(f_sec.t) if f_sec and f_sec.t else 0.0
+        
+        tot_entradas = f_bar_val + f_cx_val + f_sec_val
+        
+    return f"<html><head>{CSS}</head><body><div class='container-center'><div class='card-center' style='max-width:800px;'>{IMG_LOGO_PEQ}<h2>📊 RELATÓRIO GERAL (FACÇÃO)</h2><div class='grid-dash'><div class='card-kpi' style='border-left-color:#10b981;'><h3>Total de Entradas (Líquido)</h3><p style='color:#10b981;'>R$ {tot_entradas:.2f}</p></div></div><div style='display:flex; justify-content:space-between; flex-wrap:wrap; gap:10px; margin-bottom:20px;'><div style='background:#111; padding:15px; border-radius:8px; border-left:4px solid {COR_AMARELO}; flex:1;'><b>🍺 OLD GOOSE (BAR):</b><br><span style='color:#FFF; font-size:18px;'>R$ {f_bar_val:.2f}</span></div><div style='background:#111; padding:15px; border-radius:8px; border-left:4px solid {COR_AMARELO}; flex:1;'><b>💵 CAIXINHAS PAGAS:</b><br><span style='color:#FFF; font-size:18px;'>R$ {f_cx_val:.2f}</span></div><div style='background:#111; padding:15px; border-radius:8px; border-left:4px solid {COR_AMARELO}; flex:1;'><b>👕 MATERIAIS (SECRETARIA):</b><br><span style='color:#FFF; font-size:18px;'>R$ {f_sec_val:.2f}</span></div></div><br><a href='/tesouraria' class='btn-acao btn-dark' style='width:250px; margin:auto;'>⬅️ Voltar à Tesouraria</a></div></div></body></html>"
 
 # ==========================================
-# OLD GOOSE (BAR / PDV / ESTOQUE)
+# OLD GOOSE (BAR / PDV / ESTOQUE / DASHBOARD)
 # ==========================================
 @app.get("/oldgoose", response_class=HTMLResponse)
 async def menu_oldgoose(request: Request):
     role = request.session.get("role")
     if not check_access(role, ["admin", "diretoria", "old_goose", "caixa", "tesoureiro"]): return RedirectResponse("/central")
+    
     botoes = "<a href='/pdv' class='btn-acao' style='font-size: 18px; padding: 20px;'>🛒 PAINEL DE VENDAS (COMANDAS)</a>"
     if check_access(role, ["admin", "diretoria", "old_goose", "tesoureiro"]):
         botoes += "<a href='/estoque' class='btn-acao btn-dark' style='font-size: 18px; padding: 20px;'>📦 GESTÃO DE ESTOQUE E COMPRAS</a>"
@@ -355,13 +373,16 @@ async def tela_comanda_detalhe(numero_comanda: str, request: Request):
     with engine.connect() as conn:
         comanda = conn.execute(text("SELECT numero_comanda, total_conta FROM comandas WHERE numero_comanda = :c AND status = 'ABERTA' ORDER BY id DESC LIMIT 1"), {"c": numero_comanda}).fetchone()
         if not comanda: return RedirectResponse("/pdv")
+        
         itens_lançados = conn.execute(text("SELECT id, item_nome, valor FROM vendas_itens WHERE comanda_num = :c AND status = 'ABERTA' ORDER BY id DESC"), {"c": numero_comanda}).fetchall()
-        html_itens = "".join([f"<div style='display:flex; justify-content:space-between; padding:10px; border-bottom:1px dashed {COR_BORDA}; color:#FFF; align-items:center;'><span>{it.item_nome}</span><span>R$ {float(it.valor):.2f} <form action='/pdv/remover_item' method='post' style='display:inline; margin-left:15px;'><input type='hidden' name='item_id' value='{it.id}'><input type='hidden' name='num_comanda' value='{numero_comanda}'><button style='background:none; border:none; color:{COR_VERMELHO}; cursor:pointer; font-size:18px;' title='Estornar'>☒</button></form></span></div>" for it in itens_lançados])
+        html_itens = "".join([f"<div style='display:flex; justify-content:space-between; padding:10px; border-bottom:1px dashed {COR_BORDA}; color:#FFF; align-items:center;'><span>{it.item_nome}</span><span>R$ {float(it.valor or 0):.2f} <form action='/pdv/remover_item' method='post' style='display:inline; margin-left:15px;'><input type='hidden' name='item_id' value='{it.id}'><input type='hidden' name='num_comanda' value='{numero_comanda}'><button style='background:none; border:none; color:{COR_VERMELHO}; cursor:pointer; font-size:18px;' title='Estornar Item'>☒</button></form></span></div>" for it in itens_lançados])
+        
         produtos_db = conn.execute(text("SELECT id, nome, preco, estoque FROM produtos ORDER BY nome")).fetchall()
         html_produtos = ""
         for p in produtos_db:
-            if p.estoque > 0: html_produtos += f"<div class='card-produto' onclick='adicionarItem({p.id})'><span style='font-weight:bold; color:{COR_AMARELO}; display:block; font-size:15px;'>{p.nome.upper()}</span><span style='color:#FFF; font-weight:bold; font-size:14px; display:block; margin-top:5px;'>R$ {float(p.preco):.2f}</span><span class='badge-estoque'>Estoque: {int(p.estoque)} un</span></div>"
-            else: html_produtos += f"<div class='card-produto' style='border-color:{COR_VERMELHO}; opacity:0.6; cursor:not-allowed;'><span style='font-weight:bold; color:{COR_VERMELHO}; display:block; font-size:15px; text-decoration: line-through;'>{p.nome.upper()}</span><span style='color:#FFF; font-weight:bold; font-size:14px; display:block; margin-top:5px;'>R$ {float(p.preco):.2f}</span><span class='badge-estoque' style='color:{COR_VERMELHO}; font-weight:bold;'>ESGOTADO</span></div>"
+            if p.estoque > 0: html_produtos += f"<div class='card-produto' onclick='adicionarItem({p.id})'><span style='font-weight:bold; color:{COR_AMARELO}; display:block; font-size:15px;'>{p.nome.upper()}</span><span style='color:#FFF; font-weight:bold; font-size:14px; display:block; margin-top:5px;'>R$ {float(p.preco or 0):.2f}</span><span class='badge-estoque'>Estoque: {int(p.estoque or 0)} un</span></div>"
+            else: html_produtos += f"<div class='card-produto' style='border-color:{COR_VERMELHO}; opacity:0.6; cursor:not-allowed;'><span style='font-weight:bold; color:{COR_VERMELHO}; display:block; font-size:15px; text-decoration: line-through;'>{p.nome.upper()}</span><span style='color:#FFF; font-weight:bold; font-size:14px; display:block; margin-top:5px;'>R$ {float(p.preco or 0):.2f}</span><span class='badge-estoque' style='color:{COR_VERMELHO}; font-weight:bold;'>ESGOTADO</span></div>"
+
     js_inject = f"<script>function adicionarItem(prodId) {{ let form = document.createElement('form'); form.method = 'POST'; form.action = '/pdv/adicionar_item'; form.innerHTML = `<input type='hidden' name='comanda_num' value='{numero_comanda}'><input type='hidden' name='produto_id' value='${{prodId}}'>`; document.body.appendChild(form); form.submit(); }}</script>"
     return f"<html><head>{CSS}{js_inject}</head><body style='background:{COR_FUNDO};'><div style='display:flex; height:100vh; width:100%; overflow:hidden;'><div style='flex:1.3; padding:20px; display:flex; flex-direction:column; background:{COR_CARD}; border-right:2px solid {COR_BORDA}; overflow-y:auto;'><h2>🍺 Itens do Bar</h2><div class='grid-produtos'>{html_produtos}</div></div><div style='flex:1; padding:20px; display:flex; flex-direction:column; justify-content:space-between; background:#080808; overflow-y:auto;'><div><h2 style='color:#FFF; margin-bottom:5px;'>📋 {comanda.numero_comanda.upper()}</h2><div style='background:#000; border:1px solid {COR_BORDA}; border-radius:8px; padding:10px; margin-top:15px; max-height:220px; overflow-y:auto;'>{html_itens if html_itens else '<p style=\"color:#444; text-align:center;\">Nenhum item lançado ainda.</p>'}</div></div><div style='background:#111; padding:20px; border-radius:8px; margin-top:20px; border:1px solid {COR_BORDA};'><div style='color:#888; font-size:14px;'>TOTAL DA CONTA</div><div style='color:{COR_AMARELO}; font-size:40px; font-weight:bold; margin-bottom:15px;'>R$ {float(comanda.total_conta or 0):.2f}</div><form action='/pdv/finalizar_comanda' method='post'><input type='hidden' name='comanda_num' value='{comanda.numero_comanda}'><select name='pagamento' class='input-padrao' style='font-size:16px; padding:12px; margin-bottom:12px;'><option value='01'>💵 DINHEIRO</option><option value='17'>💠 PIX</option><option value='03'>💳 CRÉDITO</option><option value='04'>💳 DÉBITO</option></select><button class='btn-acao' style='font-size:18px; padding:15px;'>🏁 FECHAR CONTA</button></form><a href='/pdv' class='btn-acao btn-dark' style='margin-top:5px; padding:10px; font-size:12px;'>⬅️ VOLTAR AO PAINEL</a></div></div></div></body></html>"
 
@@ -394,11 +415,13 @@ async def finalizar_comanda(request: Request, comanda_num: str = Form(...), paga
         comanda = conn.execute(text("SELECT total_conta FROM comandas WHERE numero_comanda = :c AND status = 'ABERTA' ORDER BY id DESC LIMIT 1"), {"c": comanda_num}).fetchone()
         if not comanda: return RedirectResponse(url="/pdv", status_code=303)
         itens = conn.execute(text("SELECT item_nome, valor FROM vendas_itens WHERE comanda_num = :c AND status = 'ABERTA'"), {"c": comanda_num}).fetchall()
+        
         conn.execute(text("UPDATE comandas SET status = 'FECHADA', forma_pagamento = :p, data_fechamento = CURRENT_TIMESTAMP WHERE numero_comanda = :c AND status = 'ABERTA'"), {"p": nome_pagamento, "c": comanda_num})
         conn.execute(text("UPDATE vendas_itens SET status = 'FECHADA' WHERE comanda_num = :c AND status = 'ABERTA'"), {"c": comanda_num})
+        
         txt = f"--------------------------------\n   STEEL GOOSE MOTO GROUP\nPLANALTO-DF\n--------------------------------\nCOMANDA: {comanda_num.upper()}\nOPERADOR: {usuario.upper()}\nDATA: {datetime.now().strftime('%d/%m/%Y %H:%M')}\n--------------------------------\n"
-        for idx, item in enumerate(itens): txt += f"1x {item.item_nome[:20]:<20} R$ {float(item.valor):.2f}\n"
-        txt += f"--------------------------------\nTOTAL: R$ {float(comanda.total_conta):.2f}\nPAGTO: {nome_pagamento}\n Obrigado! 🦅\n--------------------------------\n"
+        for idx, item in enumerate(itens): txt += f"1x {item.item_nome[:20]:<20} R$ {float(item.valor or 0):.2f}\n"
+        txt += f"--------------------------------\nTOTAL: R$ {float(comanda.total_conta or 0):.2f}\nPAGTO: {nome_pagamento}\n Obrigado! 🦅\n--------------------------------\n"
         conn.execute(text("INSERT INTO fila_impressao (conteudo) VALUES (:txt)"), {"txt": txt})
     return HTMLResponse(f"<script>alert('Conta {comanda_num} fechada!'); window.location.href='/pdv';</script>")
 
@@ -413,9 +436,9 @@ async def tela_estoque(request: Request):
             acoes = f"<div style='display:flex; gap:5px;'><button type='button' class='btn-acao' style='padding:8px; margin:0; background:#10b981; color:#000;' onclick='abrirModalEntrada({r.id}, \"{n_seguro}\")' title='Compra'>➕</button><button type='button' class='btn-acao btn-dark' style='padding:8px; margin:0;' onclick='abrirModal({r.id}, \"{n_seguro}\", \"{r.categoria}\", {float(r.preco or 0)})' title='Editar'>✏️</button><form action='/excluir_produto' method='post' style='margin:0;' onsubmit='return confirm(\"Excluir item?\");'><input type='hidden' name='id' value='{r.id}'><button class='btn-acao btn-red' style='padding:8px; margin:0;'>🗑️</button></form></div>"
             linhas += f"<tr><td style='color:#FFF; font-weight:bold;'>{r.nome.upper()}</td><td style='color:{COR_AMARELO};'>R$ {float(r.preco or 0):.2f}</td><td style='color:#FFF; text-align:center;'>{int(r.estoque or 0)} un</td><td>{acoes}</td></tr>"
             
-    add_form = f"<div style='display:flex; justify-content:space-between; align-items:center; margin-bottom:15px;'><h3>📦 Produtos</h3><a href='/historico_compras' class='btn-acao btn-dark' style='width:auto; margin:0; padding:10px 15px; font-size:12px;'>📜 HISTÓRICO DE COMPRAS</a></div><div style='background:#0A0A0A; padding:20px; border-radius:10px; margin-bottom:20px; border:1px solid {COR_BORDA};'><h3>➕ CADASTRAR PRODUTO NO BAR</h3><form action='/novo_produto' method='post' style='display:flex; flex-wrap:wrap; gap:10px;'><input name='nome' placeholder='Nome da Bebida / Item' class='input-padrao' style='flex:2;' required><select name='cat' class='input-padrao' style='flex:1;'><option value='BEBIDAS'>BEBIDAS</option><option value='ALIMENTOS'>ALIMENTOS</option><option value='OUTROS'>OUTROS</option></select><input name='preco' placeholder='Preço de Venda' step='0.01' type='number' class='input-padrao' style='width:120px;' required><input name='qtd' type='number' placeholder='Qtd Estoque Inicial' class='input-padrao' style='width:150px;' required><button class='btn-acao' style='width:100%;'>SALVAR NO ESTOQUE</button></form></div>"
+    add_form = f"<div style='display:flex; justify-content:space-between; align-items:center; margin-bottom:15px;'><h3>📦 Produtos</h3><a href='/historico_compras' class='btn-acao btn-dark' style='width:auto; margin:0; padding:10px 15px; font-size:12px;'>📜 HISTÓRICO DE COMPRAS</a></div><div style='background:#0A0A0A; padding:20px; border-radius:10px; margin-bottom:20px; border:1px solid {COR_BORDA};'><h3>➕ CADASTRAR PRODUTO NO BAR</h3><form action='/novo_produto' method='post' style='display:flex; flex-wrap:wrap; gap:10px;'><input name='nome' placeholder='Nome da Bebida' class='input-padrao' style='flex:2;' required><select name='cat' class='input-padrao' style='flex:1;'><option value='BEBIDAS'>BEBIDAS</option><option value='ALIMENTOS'>ALIMENTOS</option><option value='OUTROS'>OUTROS</option></select><input name='preco' placeholder='Preço de Venda' step='0.01' type='number' class='input-padrao' style='width:120px;' required><input name='qtd' type='number' placeholder='Qtd Estoque' class='input-padrao' style='width:150px;' required><button class='btn-acao' style='width:100%;'>SALVAR NO ESTOQUE</button></form></div>"
     modal_edit = f"<div id='editModal' style='display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.8); z-index:1000; align-items:center; justify-content:center;'><div class='card-center' style='position:relative; width:90%; max-width:400px; padding:20px; background:#121214;'><span onclick='document.getElementById(\"editModal\").style.display=\"none\"' style='position:absolute; top:10px; right:15px; cursor:pointer; font-size:24px; color:#FFF;'>&times;</span><h3 style='margin-top:0;'>✏️ EDITAR PRODUTO</h3><form action='/editar_produto' method='post' style='display:flex; flex-direction:column; gap:10px;'><input type='hidden' name='id' id='edit_id'><input name='nome' id='edit_nome' class='input-padrao' required><select name='cat' id='edit_cat' class='input-padrao' required><option value='BEBIDAS'>BEBIDAS</option><option value='ALIMENTOS'>ALIMENTOS</option><option value='OUTROS'>OUTROS</option></select><input name='preco' id='edit_preco' type='number' step='0.01' class='input-padrao' required><button class='btn-acao' style='margin-top:10px;'>SALVAR ALTERAÇÕES</button></form></div></div>"
-    modal_entrada = f"<div id='entradaModal' style='display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.8); z-index:1000; align-items:center; justify-content:center;'><div class='card-center' style='position:relative; width:90%; max-width:400px; padding:20px; background:#121214; border:1px solid {COR_BORDA};'><span onclick='document.getElementById(\"entradaModal\").style.display=\"none\"' style='position:absolute; top:10px; right:15px; cursor:pointer; font-size:24px; color:#FFF;'>&times;</span><h3 style='margin-top:0; color:#10b981;'>📥 REGISTRAR COMPRA</h3><form action='/att_estoque' method='post' style='display:flex; flex-direction:column; gap:10px;'><input type='hidden' name='id' id='entrada_id'><p style='color:#FFF; text-align:left; margin:0;'>Produto: <b id='entrada_nome' style='color:#10b981; text-transform:uppercase;'></b></p><div><label style='font-size:12px; color:#aaa; font-weight:bold;'>QUANTIDADE COMPRADA (UN):</label><input name='q' type='number' class='input-padrao' required autocomplete='off'></div><div><label style='font-size:12px; color:#aaa; font-weight:bold;'>VALOR TOTAL PAGO (R$):</label><input name='custo' type='number' step='0.01' class='input-padrao' placeholder='Ex: 150.00' required></div><button class='btn-acao' style='background:#10b981; margin-top:10px;'>SALVAR ENTRADA</button></form></div></div>"
+    modal_entrada = f"<div id='entradaModal' style='display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.8); z-index:1000; align-items:center; justify-content:center;'><div class='card-center' style='position:relative; width:90%; max-width:400px; padding:20px; background:#121214; border:1px solid {COR_BORDA};'><span onclick='document.getElementById(\"entradaModal\").style.display=\"none\"' style='position:absolute; top:10px; right:15px; cursor:pointer; font-size:24px; color:#FFF;'>&times;</span><h3 style='margin-top:0; color:#10b981;'>📥 REGISTRAR COMPRA</h3><form action='/att_estoque' method='post' style='display:flex; flex-direction:column; gap:10px;'><input type='hidden' name='id' id='entrada_id'><p style='color:#FFF; text-align:left; margin:0;'>Produto: <b id='entrada_nome' style='color:#10b981; text-transform:uppercase;'></b></p><div><label style='font-size:12px; color:#aaa; font-weight:bold;'>QTD (UN):</label><input name='q' type='number' class='input-padrao' required autocomplete='off'></div><div><label style='font-size:12px; color:#aaa; font-weight:bold;'>CUSTO TOTAL (R$):</label><input name='custo' type='number' step='0.01' class='input-padrao' placeholder='Ex: 150.00' required></div><button class='btn-acao' style='background:#10b981; margin-top:10px;'>SALVAR ENTRADA</button></form></div></div>"
     js_modal = "<script>function abrirModal(id, nome, cat, preco) { document.getElementById('edit_id').value = id; document.getElementById('edit_nome').value = nome; document.getElementById('edit_cat').value = cat; document.getElementById('edit_preco').value = preco; document.getElementById('editModal').style.display = 'flex'; } function abrirModalEntrada(id, nome) { document.getElementById('entrada_id').value = id; document.getElementById('entrada_nome').innerText = nome; document.getElementById('entradaModal').style.display = 'flex'; }</script>"
     return f"<html><head>{CSS}{js_modal}</head><body>{modal_edit}{modal_entrada}<div class='container-center'><div class='card-center' style='max-width:800px;'>{IMG_LOGO_PEQ}<h2>📦 Estoque</h2>{add_form}<div style='max-height:400px; overflow-y:auto; border:1px solid {COR_BORDA};'><table><tr><th>Produto</th><th>Preço</th><th>Qtd Atual</th><th>Ações</th></tr>{linhas}</table></div><br><a href='/oldgoose' class='btn-acao btn-dark' style='width:200px; margin:auto;'>⬅️ Voltar ao Old Goose</a></div></div></body></html>"
 
@@ -451,8 +474,10 @@ async def historico_compras(request: Request):
     with engine.connect() as conn:
         hist = conn.execute(text("SELECT produto_nome, qtd_adicionada, valor_custo, data_entrada FROM historico_estoque ORDER BY id DESC LIMIT 100")).fetchall()
         for r in hist:
-            custo_unit = float(r.valor_custo)/r.qtd_adicionada if r.qtd_adicionada > 0 else 0
-            linhas += f"<tr><td style='color:#FFF; font-weight:bold;'>{r.produto_nome}</td><td style='color:{COR_AMARELO}; text-align:center;'>{r.qtd_adicionada}</td><td style='color:#FFF; text-align:right;'>R$ {float(r.valor_custo):.2f}<br><small style='color:#888;'>R$ {custo_unit:.2f}/un</small></td><td style='color:#888; text-align:right;'>{r.data_entrada}</td></tr>"
+            custo = float(r.valor_custo or 0)
+            qtd = int(r.qtd_adicionada or 0)
+            custo_unit = custo/qtd if qtd > 0 else 0
+            linhas += f"<tr><td style='color:#FFF; font-weight:bold;'>{r.produto_nome}</td><td style='color:{COR_AMARELO}; text-align:center;'>{qtd}</td><td style='color:#FFF; text-align:right;'>R$ {custo:.2f}<br><small style='color:#888;'>R$ {custo_unit:.2f}/un</small></td><td style='color:#888; text-align:right;'>{r.data_entrada}</td></tr>"
     return f"<html><head>{CSS}</head><body><div class='container-center'><div class='card-center' style='max-width:800px;'>{IMG_LOGO_PEQ}<h2>📜 Histórico de Compras</h2><div style='max-height:500px; overflow-y:auto; border:1px solid {COR_BORDA};'><table><thead style='background:#0A0A0A; position:sticky; top:0;'><tr><th>Produto</th><th style='text-align:center;'>Qtd Comprada</th><th style='text-align:right;'>Custo Total</th><th style='text-align:right;'>Data</th></tr></thead><tbody>{linhas if linhas else '<tr><td colspan=\"4\" style=\"text-align:center; color:#777;\">Nenhum registro encontrado.</td></tr>'}</tbody></table></div><br><a href='/estoque' class='btn-acao btn-dark' style='width:200px; margin:auto;'>⬅️ Voltar ao Estoque</a></div></div></body></html>"
 
 @app.post("/editar_produto")
@@ -476,6 +501,7 @@ async def excluir_produto(request: Request):
 @app.get("/dashboard", response_class=HTMLResponse)
 async def dashboard(request: Request, inicio: str = "", fim: str = "", tipo_venda: str = "TODOS"):
     if not check_access(request.session.get("role"), ["admin", "diretoria", "old_goose", "tesoureiro"]): return RedirectResponse("/central")
+    
     dt_inicio = inicio if inicio else date.today().strftime("%Y-%m-%d")
     dt_fim = fim if fim else date.today().strftime("%Y-%m-%d")
     
@@ -489,7 +515,7 @@ async def dashboard(request: Request, inicio: str = "", fim: str = "", tipo_vend
     
     with engine.connect() as conn:
         kpi = conn.execute(text(f"SELECT SUM(total_conta) as total FROM comandas WHERE {where_clause}"), params).fetchone()
-        faturamento_filtrado = float(kpi.total or 0)
+        faturamento_filtrado = float(kpi.total) if kpi and kpi.total else 0.0
         
         pag_q = conn.execute(text(f"SELECT forma_pagamento, SUM(total_conta) as total FROM comandas WHERE {where_clause} GROUP BY forma_pagamento"), params).fetchall()
         totais_pag = {"DINHEIRO": 0.0, "PIX": 0.0, "C. CREDITO": 0.0, "C. DEBITO": 0.0}
@@ -497,11 +523,11 @@ async def dashboard(request: Request, inicio: str = "", fim: str = "", tipo_vend
             if p.forma_pagamento in totais_pag: totais_pag[p.forma_pagamento] = float(p.total or 0)
 
         estornos_kpi = conn.execute(text(f"SELECT COUNT(*) as qtd, SUM(valor) as total FROM vendas_itens WHERE {where_estorno}"), {"inicio": dt_inicio, "fim": dt_fim}).fetchone()
-        total_estornado = float(estornos_kpi.total or 0)
-        qtd_estornada = int(estornos_kpi.qtd or 0)
+        total_estornado = float(estornos_kpi.total) if estornos_kpi and estornos_kpi.total else 0.0
+        qtd_estornada = int(estornos_kpi.qtd) if estornos_kpi and estornos_kpi.qtd else 0
             
         itens_db = conn.execute(text(f"SELECT item_nome, COUNT(*) as qtd, SUM(valor) as t FROM vendas_itens WHERE status = 'FECHADA' AND comanda_num IN (SELECT numero_comanda FROM comandas WHERE {where_clause}) GROUP BY item_nome ORDER BY qtd DESC"), params).fetchall()
-        linhas_tabela = "".join([f"<tr><td style='color:#FFF; font-weight:bold;'>{it.item_nome}</td><td style='color:{COR_AMARELO}; text-align:center;'>{it.qtd}</td><td style='color:#FFF; text-align:right;'>R$ {float(it.t):.2f}</td></tr>" for it in itens_db])
+        linhas_tabela = "".join([f"<tr><td style='color:#FFF; font-weight:bold;'>{it.item_nome}</td><td style='color:{COR_AMARELO}; text-align:center;'>{it.qtd}</td><td style='color:#FFF; text-align:right;'>R$ {float(it.t or 0):.2f}</td></tr>" for it in itens_db])
 
     opcoes_select = f"<option value='TODOS' {'selected' if tipo_venda == 'TODOS' else ''}>⚙️ TODOS OS TIPOS</option><option value='DINHEIRO' {'selected' if tipo_venda == 'DINHEIRO' else ''}>💵 DINHEIRO</option><option value='PIX' {'selected' if tipo_venda == 'PIX' else ''}>💠 PIX</option><option value='C. CREDITO' {'selected' if tipo_venda == 'C. CREDITO' else ''}>💳 CARTÃO CRÉDITO</option><option value='C. DEBITO' {'selected' if tipo_venda == 'C. DEBITO' else ''}>💳 CARTÃO DÉBITO</option>"
     
@@ -535,10 +561,9 @@ async def tela_usuarios(request: Request):
                 btn_del = f"<form action='/excluir_usuario' method='post' style='margin:0;' onsubmit='return confirm(\"Excluir membro permanentemente?\");'><input type='hidden' name='id' value='{r.id}'><button class='btn-acao btn-red' style='padding:8px; margin:0;'>🗑️</button></form>"
                 acoes = f"<div style='display:flex; gap:5px;'>{btn_block}{btn_edit_acesso}{btn_del}</div>"
             st_badge = f"<span style='color:#10b981; font-weight:bold;'>ATIVO</span>" if r.status == 'ATIVO' else f"<span style='color:{COR_VERMELHO}; font-weight:bold;'>PENDENTE/BLOQ.</span>"
-            role_display = r.role.replace(',', ', ').upper()
+            role_display = (r.role or "MEMBRO").replace(',', ', ').upper()
             linhas += f"<tr><td><b style='color:#FFF;'>{r.username.upper()}</b><br><small style='color:#888;'>{r.email or 'S/ Email'}</small></td><td style='color:{COR_AMARELO}; font-weight:bold; font-size:11px;'>{role_display}</td><td>{st_badge}</td><td>{acoes}</td></tr>"
             
-    # Formulário de Adição com Múltiplas Escolhas
     caixas_add = f"""
     <div style='display:grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap:10px; background:#141416; padding:15px; border-radius:8px; border:1px solid {COR_BORDA};'>
         <label class='checkbox-grid'><input type='checkbox' name='roles' value='candidato'> Candidato</label>
@@ -572,7 +597,7 @@ async def tela_usuarios(request: Request):
     modal_acesso = f"""
     <div id='acessoModal' style='display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.8); z-index:1000; align-items:center; justify-content:center;'>
         <div class='card-center' style='position:relative; width:90%; max-width:500px; padding:20px; background:#121214;'>
-            <span onclick='fecharModalAcesso()' style='position:absolute; top:10px; right:15px; cursor:pointer; font-size:24px; color:#FFF;'>&times;</span>
+            <span onclick='document.getElementById(\"acessoModal\").style.display=\"none\"' style='position:absolute; top:10px; right:15px; cursor:pointer; font-size:24px; color:#FFF;'>&times;</span>
             <h3 style='margin-top:0; color:{COR_AMARELO};'>⚙️ ALTERAR PERMISSÕES</h3>
             <form action='/alterar_acesso' method='post' style='display:flex; flex-direction:column; gap:10px;'>
                 <input type='hidden' name='id' id='acesso_id'>
@@ -583,7 +608,7 @@ async def tela_usuarios(request: Request):
         </div>
     </div>
     """
-    js_modal_acesso = "<script>function abrirModalAcesso(id, user, roles_str) { document.getElementById('acesso_id').value = id; document.getElementById('acesso_user').innerText = user; let checkboxes = document.querySelectorAll('.edit-role-cb'); checkboxes.forEach(cb => cb.checked = false); if(roles_str) { let roles = roles_str.split(','); roles.forEach(r => { let cb = document.getElementById('cb_edit_' + r.trim()); if(cb) cb.checked = true; }); } document.getElementById('acessoModal').style.display = 'flex'; } function fecharModalAcesso() { document.getElementById('acessoModal').style.display = 'none'; }</script>"
+    js_modal_acesso = "<script>function abrirModalAcesso(id, user, roles_str) { document.getElementById('acesso_id').value = id; document.getElementById('acesso_user').innerText = user; let checkboxes = document.querySelectorAll('.edit-role-cb'); checkboxes.forEach(cb => cb.checked = false); if(roles_str) { let roles = roles_str.split(','); roles.forEach(r => { let cb = document.getElementById('cb_edit_' + r.trim()); if(cb) cb.checked = true; }); } document.getElementById('acessoModal').style.display = 'flex'; }</script>"
     return f"<html><head>{CSS}{js_modal_acesso}</head><body>{modal_acesso}<div class='container-center'><div class='card-center' style='max-width:900px;'>{IMG_LOGO_PEQ}<h2>Aprovações e Usuários</h2>{add_form}<div style='max-height:400px; overflow-y:auto; border:1px solid {COR_BORDA};'><table><tr><th>Usuário</th><th>Cargos</th><th>Status</th><th>Ações</th></tr>{linhas}</table></div><br><a href='/diretoria' class='btn-acao btn-dark' style='width:250px; margin:auto;'>⬅️ Voltar à Diretoria</a></div></div></body></html>"
 
 @app.post("/toggle_usuario")
