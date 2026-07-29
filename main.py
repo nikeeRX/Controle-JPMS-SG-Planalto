@@ -25,6 +25,7 @@ with engine.begin() as conn:
         CREATE TABLE IF NOT EXISTS caixinha (id SERIAL PRIMARY KEY, username TEXT, mes_ano TEXT, valor DECIMAL(10,2) DEFAULT 50.00, status TEXT DEFAULT 'PENDENTE', comprovante TEXT);
         CREATE TABLE IF NOT EXISTS secretaria_itens (id SERIAL PRIMARY KEY, codigo TEXT UNIQUE, descricao TEXT, preco DECIMAL(10,2), estoque INT);
         CREATE TABLE IF NOT EXISTS pedidos_secretaria (id SERIAL PRIMARY KEY, username TEXT, item_nome TEXT, quantidade INT, valor_total DECIMAL(10,2), status TEXT DEFAULT 'PENDENTE', comprovante TEXT, data_pedido TIMESTAMP DEFAULT CURRENT_TIMESTAMP);
+        CREATE TABLE IF NOT EXISTS fila_impressao (id SERIAL PRIMARY KEY, conteudo TEXT, status TEXT DEFAULT 'PENDENTE', data_criacao TIMESTAMP DEFAULT CURRENT_TIMESTAMP);
     """))
 
 try:
@@ -45,7 +46,7 @@ CSS = f"""
     .btn-acao:hover {{ opacity: 0.9; transform: scale(0.98); box-shadow: 0 0 12px rgba(243, 186, 22, 0.4); }}
     .btn-dark {{ background: #1A1A1A; color: {COR_AMARELO}; border: 1px solid {COR_AMARELO}; }}
     .btn-dark:hover {{ background: {COR_AMARELO}; color: #000; }}
-    .btn-red {{ background: {COR_VERMELHO}; color: white; }}
+    .btn-red {{ background: {COR_VERMELHO}; color: white; border: none; }}
     .btn-green {{ background: #10b981; color: #000; border:none; }}
     .container-center {{ display: flex; align-items: center; justify-content: center; height: 100vh; padding: 20px; overflow-y: auto; }}
     .card-center {{ background: {COR_CARD}; color: {COR_TEXTO}; padding: 30px; border-radius: 15px; width: 100%; max-width: 650px; text-align: center; box-shadow: 0 12px 40px rgba(0,0,0,0.9); margin: auto; border: 1px solid {COR_BORDA}; }}
@@ -60,9 +61,17 @@ CSS = f"""
     .status-pendente {{ color: {COR_VERMELHO}; font-weight: bold; font-size:12px; }}
     .status-analise {{ color: #f59e0b; font-weight: bold; font-size:12px; }}
     .status-pago {{ color: #10b981; font-weight: bold; font-size:12px; }}
+    .checkbox-grid label {{ color: #FFF; font-size: 13px; cursor: pointer; display: flex; align-items: center; gap: 5px; }}
+    .checkbox-grid input {{ cursor: pointer; transform: scale(1.2); }}
 </style>
 """
 IMG_LOGO_PEQ = f"<div style='display:flex; justify-content:center; margin-bottom:15px;'><img src='{IMG_URL}' class='logo-peq'></div>"
+
+# FUNÇÃO DE CONTROLE DE PERMISSÕES ACUMULATIVAS
+def check_access(role_str, allowed_roles):
+    if not role_str: return False
+    user_roles = [r.strip() for r in role_str.split(",")]
+    return any(r in user_roles for r in allowed_roles)
 
 @app.get("/logo.png")
 async def exibir_logo(): 
@@ -100,21 +109,37 @@ async def logout(request: Request):
     return RedirectResponse("/")
 
 # ==========================================
-# HUB CENTRAL
+# HUB CENTRAL E CONTROLE DE EXIBIÇÃO
 # ==========================================
 @app.get("/central", response_class=HTMLResponse)
 async def central(request: Request):
     user, role = request.session.get("user"), request.session.get("role")
     if not user: return RedirectResponse(url="/")
+    
     botoes = "<a href='/modulo/steelgoose' class='btn-acao btn-dark' style='padding:25px; font-size:16px;'>🦅 STEEL GOOSE</a>"
-    botoes += "<a href='/secretaria' class='btn-acao btn-dark' style='padding:25px; font-size:16px;'>🗄️ SECRETARIA</a>"
-    botoes += "<a href='/tesouraria' class='btn-acao btn-dark' style='padding:25px; font-size:16px;'>💰 TESOURARIA (CLUBE)</a>"
-    if role in ["admin", "diretoria", "rp"]: botoes += "<a href='/modulo/rp' class='btn-acao btn-dark' style='padding:25px; font-size:16px;'>📸 RELAÇÕES PÚBLICAS</a>"
-    if role in ["admin", "diretoria"]: botoes += "<a href='/diretoria' class='btn-acao btn-red' style='padding:25px; font-size:16px;'>👔 DIRETORIA</a>"
+    
+    if check_access(role, ["admin", "diretoria", "secretario"]):
+        botoes += "<a href='/secretaria' class='btn-acao btn-dark' style='padding:25px; font-size:16px;'>🗄️ SECRETARIA</a>"
+    else:
+        botoes += "<a href='/secretaria/loja' class='btn-acao btn-dark' style='padding:25px; font-size:16px;'>🗄️ SECRETARIA (LOJA)</a>"
+        
+    if check_access(role, ["admin", "diretoria", "tesoureiro", "membro", "candidato"]):
+        botoes += "<a href='/tesouraria' class='btn-acao btn-dark' style='padding:25px; font-size:16px;'>💰 TESOURARIA (CLUBE)</a>"
+        
+    if check_access(role, ["admin", "diretoria", "rp"]): 
+        botoes += "<a href='/modulo/rp' class='btn-acao btn-dark' style='padding:25px; font-size:16px;'>📸 RELAÇÕES PÚBLICAS</a>"
+        
+    if check_access(role, ["admin", "diretoria"]): 
+        botoes += "<a href='/diretoria' class='btn-acao btn-red' style='padding:25px; font-size:16px;'>👔 DIRETORIA</a>"
+        
     botoes += "<a href='/modulo/ouvidoria' class='btn-acao btn-dark' style='padding:25px; font-size:16px;'>📢 OUVIDORIA</a>"
-    if role in ["admin", "diretoria", "old_goose", "caixa", "tesoureiro"]: botoes += "<a href='/oldgoose' class='btn-acao' style='padding:25px; font-size:16px; grid-column: 1 / -1; box-shadow: 0 0 15px rgba(243, 186, 22, 0.2);'>🦉 OLD GOOSE (BAR)</a>"
+    
+    if check_access(role, ["admin", "diretoria", "old_goose", "caixa", "tesoureiro"]): 
+        botoes += "<a href='/oldgoose' class='btn-acao' style='padding:25px; font-size:16px; grid-column: 1 / -1; box-shadow: 0 0 15px rgba(243, 186, 22, 0.2);'>🦉 OLD GOOSE (BAR)</a>"
+        
     botoes_grid = f"<div style='display:grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap:15px; margin-top:20px;'>{botoes}</div>"
-    return f"<html><head>{CSS}</head><body><div class='container-center'><div class='card-center' style='max-width:850px;'>{IMG_LOGO_PEQ}<p style='color:#888;'>Operador: <b style='color:{COR_AMARELO}; text-transform:uppercase;'>{user} ({role})</b></p>{botoes_grid}<br><a href='/logout' style='color:#C82828; font-weight:bold; text-decoration:none;'>[ SAIR DO SISTEMA ]</a></div></div></body></html>"
+    role_display = role.replace(',', ' | ').upper()
+    return f"<html><head>{CSS}</head><body><div class='container-center'><div class='card-center' style='max-width:850px;'>{IMG_LOGO_PEQ}<p style='color:#888;'>Operador: <b style='color:{COR_AMARELO};'>{user.upper()}</b><br><small style='color:#666;'>Cargos: {role_display}</small></p>{botoes_grid}<br><a href='/logout' style='color:#C82828; font-weight:bold; text-decoration:none;'>[ SAIR DO SISTEMA ]</a></div></div></body></html>"
 
 @app.get("/modulo/{nome}", response_class=HTMLResponse)
 async def modulo_em_construcao(request: Request, nome: str):
@@ -122,38 +147,45 @@ async def modulo_em_construcao(request: Request, nome: str):
     return f"<html><head>{CSS}</head><body><div class='container-center'><div class='card-center'>{IMG_LOGO_PEQ}<h2>Módulo {nome.capitalize()}</h2><p style='color:#888; font-size:18px; margin: 40px 0;'>🚧 Área em Construção 🚧</p><a href='/central' class='btn-acao btn-dark' style='width:250px; margin:auto;'>⬅️ VOLTAR AO MENU</a></div></div></body></html>"
 
 # ==========================================
-# MÓDULO SECRETARIA (LOJINHA DE MATERIAIS)
+# MÓDULO SECRETARIA E LOJA DE MATERIAIS
 # ==========================================
 @app.get("/secretaria", response_class=HTMLResponse)
 async def menu_secretaria(request: Request):
     user, role = request.session.get("user"), request.session.get("role")
-    if not user: return RedirectResponse("/")
+    if not check_access(role, ["admin", "diretoria", "secretario"]): return RedirectResponse("/secretaria/loja")
+    
     linhas_itens = ""
     with engine.connect() as conn:
         itens_db = conn.execute(text("SELECT id, codigo, descricao, preco, estoque FROM secretaria_itens ORDER BY descricao")).fetchall()
         for r in itens_db:
-            if role in ["admin", "diretoria", "secretario"]:
-                btn = f"<form action='/secretaria/excluir' method='post' style='margin:0;' onsubmit='return confirm(\"Excluir item?\");'><input type='hidden' name='id' value='{r.id}'><button class='btn-acao btn-red' style='padding:5px; margin:0;'>🗑️</button></form>"
-            else:
-                btn = f"<form action='/secretaria/solicitar' method='post' style='margin:0;'><input type='hidden' name='id' value='{r.id}'><button class='btn-acao' style='padding:5px; margin:0; font-size:12px;' {'disabled' if r.estoque <= 0 else ''}>{'SOLICITAR' if r.estoque > 0 else 'ESGOTADO'}</button></form>"
+            btn = f"<form action='/secretaria/excluir' method='post' style='margin:0;' onsubmit='return confirm(\"Excluir item?\");'><input type='hidden' name='id' value='{r.id}'><button class='btn-acao btn-red' style='padding:5px; margin:0;'>🗑️</button></form>"
             linhas_itens += f"<tr><td><b style='color:#FFF;'>{r.descricao}</b><br><small style='color:#888;'>Cód: {r.codigo}</small></td><td style='color:{COR_AMARELO};'>R$ {float(r.preco):.2f}</td><td style='text-align:center;'>{r.estoque} un</td><td>{btn}</td></tr>"
             
-    painel_admin = ""
-    if role in ["admin", "diretoria", "secretario"]:
-        painel_admin = f"<div style='background:{COR_INPUT}; padding:20px; border-radius:10px; margin-bottom:20px; border:1px solid {COR_BORDA};'><h3>➕ ADICIONAR MATERIAL</h3><form action='/secretaria/novo_item' method='post' style='display:flex; flex-wrap:wrap; gap:10px;'><input name='descricao' placeholder='Descrição (Ex: Camisa Oficial)' class='input-padrao' style='flex:2;' required><input name='preco' placeholder='Valor R$' step='0.01' type='number' class='input-padrao' style='width:120px;' required><input name='estoque' type='number' placeholder='Qtd' class='input-padrao' style='width:100px;' required><button class='btn-acao' style='width:100%;'>SALVAR ITEM</button></form></div>"
+    painel_admin = f"<div style='background:{COR_INPUT}; padding:20px; border-radius:10px; margin-bottom:20px; border:1px solid {COR_BORDA};'><h3>➕ ADICIONAR MATERIAL</h3><form action='/secretaria/novo_item' method='post' style='display:flex; flex-wrap:wrap; gap:10px;'><input name='descricao' placeholder='Descrição (Ex: Camisa Oficial)' class='input-padrao' style='flex:2;' required><input name='preco' placeholder='Valor R$' step='0.01' type='number' class='input-padrao' style='width:120px;' required><input name='estoque' type='number' placeholder='Qtd' class='input-padrao' style='width:100px;' required><button class='btn-acao' style='width:100%;'>SALVAR ITEM</button></form></div>"
         
-    return f"<html><head>{CSS}</head><body><div class='container-center'><div class='card-center' style='max-width:800px;'>{IMG_LOGO_PEQ}<h2>🗄️ SECRETARIA (Materiais)</h2>{painel_admin}<div style='max-height:400px; overflow-y:auto; border:1px solid {COR_BORDA};'><table><tr><th>Item</th><th>Preço</th><th style='text-align:center;'>Estoque</th><th>Ações</th></tr>{linhas_itens if linhas_itens else '<tr><td colspan=4 style=text-align:center;color:#777>Nenhum item disponível.</td></tr>'}</table></div><br><a href='/central' class='btn-acao btn-dark' style='width:250px; margin:auto;'>⬅️ Voltar ao Menu</a></div></div></body></html>"
+    return f"<html><head>{CSS}</head><body><div class='container-center'><div class='card-center' style='max-width:800px;'>{IMG_LOGO_PEQ}<h2>🗄️ SECRETARIA (Controle)</h2>{painel_admin}<div style='max-height:400px; overflow-y:auto; border:1px solid {COR_BORDA};'><table><tr><th>Item</th><th>Preço</th><th style='text-align:center;'>Estoque</th><th>Ações</th></tr>{linhas_itens if linhas_itens else '<tr><td colspan=4 style=text-align:center;color:#777>Nenhum item cadastrado.</td></tr>'}</table></div><br><a href='/central' class='btn-acao btn-dark' style='width:250px; margin:auto;'>⬅️ Voltar ao Menu</a></div></div></body></html>"
+
+@app.get("/secretaria/loja", response_class=HTMLResponse)
+async def secretaria_loja(request: Request):
+    if not request.session.get("user"): return RedirectResponse("/")
+    linhas_itens = ""
+    with engine.connect() as conn:
+        itens_db = conn.execute(text("SELECT id, codigo, descricao, preco, estoque FROM secretaria_itens ORDER BY descricao")).fetchall()
+        for r in itens_db:
+            btn = f"<form action='/secretaria/solicitar' method='post' style='margin:0;'><input type='hidden' name='id' value='{r.id}'><button class='btn-acao' style='padding:5px; margin:0; font-size:12px;' {'disabled' if r.estoque <= 0 else ''}>{'SOLICITAR' if r.estoque > 0 else 'ESGOTADO'}</button></form>"
+            linhas_itens += f"<tr><td><b style='color:#FFF;'>{r.descricao}</b></td><td style='color:{COR_AMARELO};'>R$ {float(r.preco):.2f}</td><td>{btn}</td></tr>"
+    return f"<html><head>{CSS}</head><body><div class='container-center'><div class='card-center' style='max-width:800px;'>{IMG_LOGO_PEQ}<h2>🛒 SOLICITAÇÃO DE MATERIAIS</h2><p style='color:#888; font-size:14px;'>Ao solicitar, a pendência será lançada na sua Tesouraria.</p><div style='max-height:400px; overflow-y:auto; border:1px solid {COR_BORDA}; margin-top:20px;'><table><tr><th>Item Disponível</th><th>Preço</th><th>Ação</th></tr>{linhas_itens if linhas_itens else '<tr><td colspan=3 style=text-align:center;color:#777>Nenhum item disponível na lojinha.</td></tr>'}</table></div><br><a href='/central' class='btn-acao btn-dark' style='width:250px; margin:auto;'>⬅️ Voltar ao Menu</a></div></div></body></html>"
 
 @app.post("/secretaria/novo_item")
 async def sec_novo_item(request: Request, descricao: str = Form(...), preco: float = Form(...), estoque: int = Form(...)):
-    if request.session.get("role") not in ["admin", "diretoria", "secretario"]: return RedirectResponse("/secretaria")
+    if not check_access(request.session.get("role"), ["admin", "diretoria", "secretario"]): return RedirectResponse("/secretaria")
     codigo = "SEC-" + datetime.now().strftime("%Y%m%d%H%M%S")
     with engine.begin() as conn: conn.execute(text("INSERT INTO secretaria_itens (codigo, descricao, preco, estoque) VALUES (:c, :d, :p, :e)"), {"c": codigo, "d": descricao.upper(), "p": preco, "e": estoque})
     return RedirectResponse(url="/secretaria", status_code=303)
 
 @app.post("/secretaria/excluir")
 async def sec_excluir(request: Request, id: int = Form(...)):
-    if request.session.get("role") not in ["admin", "diretoria", "secretario"]: return RedirectResponse("/secretaria")
+    if not check_access(request.session.get("role"), ["admin", "diretoria", "secretario"]): return RedirectResponse("/secretaria")
     with engine.begin() as conn: conn.execute(text("DELETE FROM secretaria_itens WHERE id = :id"), {"id": id})
     return RedirectResponse(url="/secretaria", status_code=303)
 
@@ -166,7 +198,7 @@ async def sec_solicitar(request: Request, id: int = Form(...)):
         if item and item.estoque > 0:
             conn.execute(text("INSERT INTO pedidos_secretaria (username, item_nome, quantidade, valor_total, status) VALUES (:u, :n, 1, :v, 'PENDENTE')"), {"u": user, "n": item.descricao, "v": item.preco})
             conn.execute(text("UPDATE secretaria_itens SET estoque = estoque - 1 WHERE id = :id"), {"id": id})
-    return HTMLResponse("<script>alert('Solicitação enviada para sua Tesouraria!'); window.location.href='/tesouraria';</script>")
+    return HTMLResponse("<script>alert('Solicitação enviada com sucesso! Acesse a Tesouraria para realizar o pagamento.'); window.location.href='/tesouraria';</script>")
 
 # ==========================================
 # MÓDULO TESOURARIA (CAIXINHAS E PENDÊNCIAS)
@@ -176,13 +208,11 @@ async def menu_tesouraria(request: Request):
     user, role = request.session.get("user"), request.session.get("role")
     if not user: return RedirectResponse("/")
     
-    # 1. GERAÇÃO AUTOMÁTICA DA CAIXINHA DO MÊS
     mes_atual = datetime.now().strftime("%m/%Y")
     with engine.begin() as conn:
         existe_caixinha = conn.execute(text("SELECT id FROM caixinha WHERE username = :u AND mes_ano = :m"), {"u": user, "m": mes_atual}).fetchone()
         if not existe_caixinha: conn.execute(text("INSERT INTO caixinha (username, mes_ano, valor, status) VALUES (:u, :m, 50.00, 'PENDENTE')"), {"u": user, "m": mes_atual})
         
-        # 2. BUSCAR DADOS DO MEMBRO LOGADO
         minhas_caixinhas = conn.execute(text("SELECT id, mes_ano, valor, status FROM caixinha WHERE username = :u ORDER BY id DESC"), {"u": user}).fetchall()
         minhas_pendencias = conn.execute(text("SELECT id, item_nome, valor_total, status, data_pedido FROM pedidos_secretaria WHERE username = :u ORDER BY id DESC"), {"u": user}).fetchall()
         
@@ -199,15 +229,15 @@ async def menu_tesouraria(request: Request):
         linhas_pend += f"<tr><td><b style='color:#FFF;'>{p.item_nome}</b><br><small style='color:#888;'>{p.data_pedido.strftime('%d/%m')}</small></td><td style='color:{COR_AMARELO};'>R$ {float(p.valor_total):.2f}</td><td class='{cls_status}'>{p.status}</td><td>{btn}</td></tr>"
 
     painel_admin = ""
-    if role in ["admin", "diretoria", "tesoureiro"]:
-        painel_admin = f"<div style='margin-bottom:20px; display:flex; gap:10px;'><a href='/tesouraria/aprovar' class='btn-acao btn-green' style='margin:0;'>✅ APROVAR PAGAMENTOS</a><a href='/tesouraria/relatorio' class='btn-acao btn-dark' style='margin:0;'>📊 RELATÓRIO GERAL</a></div>"
+    if check_access(role, ["admin", "diretoria", "tesoureiro"]):
+        painel_admin = f"<div style='margin-bottom:20px; display:flex; flex-wrap:wrap; gap:10px;'><a href='/tesouraria/aprovar' class='btn-acao btn-green' style='margin:0;'>✅ APROVAR PAGAMENTOS</a><a href='/tesouraria/relatorio' class='btn-acao btn-dark' style='margin:0;'>📊 RELATÓRIO FINANCEIRO DA FACÇÃO</a></div>"
 
     modal_pgto = f"""
     <div id='pgtoModal' style='display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.9); z-index:1000; align-items:center; justify-content:center;'>
         <div class='card-center' style='position:relative; width:90%; max-width:400px; padding:20px; background:#121214; border:1px solid {COR_BORDA};'>
             <span onclick='document.getElementById(\"pgtoModal\").style.display=\"none\"' style='position:absolute; top:10px; right:15px; cursor:pointer; font-size:24px; color:#FFF;'>&times;</span>
             <h3 style='margin-top:0; color:{COR_AMARELO};'>📲 PAGAMENTO PIX</h3>
-            <p style='color:#AAA; font-size:14px; margin-bottom:10px;'>Valor: <b id='modal_valor' style='color:#FFF; font-size:20px;'></b></p>
+            <p style='color:#AAA; font-size:14px; margin-bottom:10px;'>Valor a pagar: <b id='modal_valor' style='color:#FFF; font-size:20px;'></b></p>
             <div style='background:#FFF; padding:10px; border-radius:10px; display:inline-block; margin-bottom:15px;'>
                 <img src='https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=00020101021126580014br.gov.bcb.pix0136123456780001995204000053039995802BR5913Steel%20Goose6008Brasilia62070503***63041234' width='150'>
             </div>
@@ -224,8 +254,7 @@ async def menu_tesouraria(request: Request):
     </div>
     <script>function abrirModalPgto(tipo, id, valor) {{ document.getElementById('modal_tipo').value = tipo; document.getElementById('modal_id').value = id; document.getElementById('modal_valor').innerText = 'R$ ' + valor.toFixed(2); document.getElementById('pgtoModal').style.display = 'flex'; }}</script>
     """
-
-    return f"<html><head>{CSS}</head><body>{modal_pgto}<div class='container-center'><div class='card-center' style='max-width:850px;'>{IMG_LOGO_PEQ}<h2>💰 MINHA TESOURARIA</h2>{painel_admin}<div style='text-align:left;'><h3>💵 Caixinha Mensal</h3><div style='max-height:200px; overflow-y:auto; border:1px solid {COR_BORDA}; margin-bottom:20px;'><table><tr><th>Mês</th><th>Valor</th><th>Status</th><th>Ação</th></tr>{linhas_caixa}</table></div><h3>🛒 Pendências (Materiais)</h3><div style='max-height:200px; overflow-y:auto; border:1px solid {COR_BORDA};'><table><tr><th>Item</th><th>Valor</th><th>Status</th><th>Ação</th></tr>{linhas_pend if linhas_pend else '<tr><td colspan=4 style=text-align:center;color:#777>Nenhuma pendência.</td></tr>'}</table></div></div><br><a href='/central' class='btn-acao btn-dark' style='width:250px; margin:auto;'>⬅️ Voltar ao Menu</a></div></div></body></html>"
+    return f"<html><head>{CSS}</head><body>{modal_pgto}<div class='container-center'><div class='card-center' style='max-width:850px;'>{IMG_LOGO_PEQ}<h2>💰 MINHA TESOURARIA</h2>{painel_admin}<div style='text-align:left;'><h3>💵 Caixinha Mensal</h3><div style='max-height:200px; overflow-y:auto; border:1px solid {COR_BORDA}; margin-bottom:20px;'><table><tr><th>Mês</th><th>Valor</th><th>Status</th><th>Ação</th></tr>{linhas_caixa}</table></div><h3>🛒 Pendências (Materiais e Loja)</h3><div style='max-height:200px; overflow-y:auto; border:1px solid {COR_BORDA};'><table><tr><th>Item</th><th>Valor</th><th>Status</th><th>Ação</th></tr>{linhas_pend if linhas_pend else '<tr><td colspan=4 style=text-align:center;color:#777>Nenhuma pendência.</td></tr>'}</table></div></div><br><a href='/central' class='btn-acao btn-dark' style='width:250px; margin:auto;'>⬅️ Voltar ao Menu</a></div></div></body></html>"
 
 @app.post("/tesouraria/enviar_comprovante")
 async def enviar_comprovante(tipo: str = Form(...), id_ref: int = Form(...), arquivo: UploadFile = File(...)):
@@ -236,20 +265,20 @@ async def enviar_comprovante(tipo: str = Form(...), id_ref: int = Form(...), arq
             if tipo == "caixinha": conn.execute(text("UPDATE caixinha SET status='EM ANÁLISE', comprovante=:f WHERE id=:id"), {"f": filename, "id": id_ref})
             elif tipo == "pedido": conn.execute(text("UPDATE pedidos_secretaria SET status='EM ANÁLISE', comprovante=:f WHERE id=:id"), {"f": filename, "id": id_ref})
     except: pass
-    return HTMLResponse("<script>alert('Comprovante enviado com sucesso!'); window.location.href='/tesouraria';</script>")
+    return HTMLResponse("<script>alert('Comprovante enviado com sucesso! Aguarde a Tesouraria confirmar.'); window.location.href='/tesouraria';</script>")
 
 @app.get("/tesouraria/aprovar", response_class=HTMLResponse)
 async def tesouraria_aprovar(request: Request):
-    if request.session.get("role") not in ["admin", "diretoria", "tesoureiro"]: return RedirectResponse("/central")
+    if not check_access(request.session.get("role"), ["admin", "diretoria", "tesoureiro"]): return RedirectResponse("/central")
     linhas = ""
     with engine.connect() as conn:
         cx = conn.execute(text("SELECT id, username, mes_ano as ref, valor, comprovante, 'caixinha' as tipo FROM caixinha WHERE status='EM ANÁLISE'")).fetchall()
         pd = conn.execute(text("SELECT id, username, item_nome as ref, valor_total as valor, comprovante, 'pedido' as tipo FROM pedidos_secretaria WHERE status='EM ANÁLISE'")).fetchall()
         for r in cx + pd:
-            btn_ap = f"<form action='/tesouraria/processar' method='post' style='margin:0;'><input type='hidden' name='t' value='{r.tipo}'><input type='hidden' name='i' value='{r.id}'><input type='hidden' name='st' value='PAGO'><button class='btn-acao btn-green' style='padding:5px; margin:0;'>✔️</button></form>"
-            btn_re = f"<form action='/tesouraria/processar' method='post' style='margin:0;'><input type='hidden' name='t' value='{r.tipo}'><input type='hidden' name='i' value='{r.id}'><input type='hidden' name='st' value='PENDENTE'><button class='btn-acao btn-red' style='padding:5px; margin:0;'>❌</button></form>"
-            linhas += f"<tr><td><b style='color:#FFF; text-transform:uppercase;'>{r.username}</b><br><small style='color:#888;'>{r.tipo.upper()} - {r.ref}</small></td><td style='color:{COR_AMARELO};'>R$ {float(r.valor):.2f}</td><td><a href='/comprovantes/{r.comprovante}' target='_blank' style='color:#0ea5e9;'>Ver Anexo</a></td><td><div style='display:flex;gap:5px;'>{btn_ap}{btn_re}</div></td></tr>"
-    return f"<html><head>{CSS}</head><body><div class='container-center'><div class='card-center' style='max-width:800px;'>{IMG_LOGO_PEQ}<h2>✅ Aprovar Pagamentos</h2><div style='max-height:400px; overflow-y:auto; border:1px solid {COR_BORDA};'><table><tr><th>Membro / Ref</th><th>Valor</th><th>Comprovante</th><th>Ação</th></tr>{linhas if linhas else '<tr><td colspan=4 style=text-align:center;color:#777>Nenhum pagamento pendente de análise.</td></tr>'}</table></div><br><a href='/tesouraria' class='btn-acao btn-dark' style='width:200px; margin:auto;'>⬅️ Voltar</a></div></div></body></html>"
+            btn_ap = f"<form action='/tesouraria/processar' method='post' style='margin:0;'><input type='hidden' name='t' value='{r.tipo}'><input type='hidden' name='i' value='{r.id}'><input type='hidden' name='st' value='PAGO'><button class='btn-acao btn-green' style='padding:5px; margin:0;'>✔️ APROVAR</button></form>"
+            btn_re = f"<form action='/tesouraria/processar' method='post' style='margin:0;'><input type='hidden' name='t' value='{r.tipo}'><input type='hidden' name='i' value='{r.id}'><input type='hidden' name='st' value='PENDENTE'><button class='btn-acao btn-red' style='padding:5px; margin:0;'>❌ RECUSAR</button></form>"
+            linhas += f"<tr><td><b style='color:#FFF; text-transform:uppercase;'>{r.username}</b><br><small style='color:#888;'>{r.tipo.upper()} - {r.ref}</small></td><td style='color:{COR_AMARELO};'>R$ {float(r.valor):.2f}</td><td><a href='/comprovantes/{r.comprovante}' target='_blank' style='color:#0ea5e9; text-decoration:none; font-weight:bold;'>Ver Anexo 👁️</a></td><td><div style='display:flex;gap:5px;'>{btn_ap}{btn_re}</div></td></tr>"
+    return f"<html><head>{CSS}</head><body><div class='container-center'><div class='card-center' style='max-width:850px;'>{IMG_LOGO_PEQ}<h2>✅ Aprovar Pagamentos</h2><div style='max-height:400px; overflow-y:auto; border:1px solid {COR_BORDA};'><table><tr><th>Membro / Ref</th><th>Valor</th><th>Comprovante</th><th>Ações</th></tr>{linhas if linhas else '<tr><td colspan=4 style=text-align:center;color:#777>Nenhum pagamento pendente de análise.</td></tr>'}</table></div><br><a href='/tesouraria' class='btn-acao btn-dark' style='width:200px; margin:auto;'>⬅️ Voltar</a></div></div></body></html>"
 
 @app.get("/comprovantes/{filename}")
 async def ver_comprovante(filename: str):
@@ -259,7 +288,7 @@ async def ver_comprovante(filename: str):
 
 @app.post("/tesouraria/processar")
 async def tesouraria_processar(request: Request, t: str = Form(...), i: int = Form(...), st: str = Form(...)):
-    if request.session.get("role") not in ["admin", "diretoria", "tesoureiro"]: return RedirectResponse("/central")
+    if not check_access(request.session.get("role"), ["admin", "diretoria", "tesoureiro"]): return RedirectResponse("/central")
     try:
         with engine.begin() as conn:
             if t == "caixinha": conn.execute(text("UPDATE caixinha SET status=:s WHERE id=:id"), {"s": st, "id": i})
@@ -269,13 +298,12 @@ async def tesouraria_processar(request: Request, t: str = Form(...), i: int = Fo
 
 @app.get("/tesouraria/relatorio", response_class=HTMLResponse)
 async def relatorio_geral(request: Request):
-    if request.session.get("role") not in ["admin", "diretoria", "tesoureiro"]: return RedirectResponse("/central")
+    if not check_access(request.session.get("role"), ["admin", "diretoria", "tesoureiro"]): return RedirectResponse("/central")
     with engine.connect() as conn:
         f_bar = conn.execute(text("SELECT SUM(total_conta) as t FROM comandas WHERE status = 'FECHADA'")).fetchone().t or 0
         f_cx = conn.execute(text("SELECT SUM(valor) as t FROM caixinha WHERE status = 'PAGO'")).fetchone().t or 0
         f_sec = conn.execute(text("SELECT SUM(valor_total) as t FROM pedidos_secretaria WHERE status = 'PAGO'")).fetchone().t or 0
         tot_entradas = float(f_bar) + float(f_cx) + float(f_sec)
-        
     return f"<html><head>{CSS}</head><body><div class='container-center'><div class='card-center' style='max-width:800px;'>{IMG_LOGO_PEQ}<h2>📊 RELATÓRIO GERAL (FACÇÃO)</h2><div class='grid-dash'><div class='card-kpi' style='border-left-color:#10b981;'><h3>Total de Entradas (Líquido)</h3><p style='color:#10b981;'>R$ {tot_entradas:.2f}</p></div></div><div style='display:flex; justify-content:space-between; flex-wrap:wrap; gap:10px; margin-bottom:20px;'><div style='background:#111; padding:15px; border-radius:8px; border-left:4px solid {COR_AMARELO}; flex:1;'><b>🍺 OLD GOOSE (BAR):</b><br><span style='color:#FFF; font-size:18px;'>R$ {float(f_bar):.2f}</span></div><div style='background:#111; padding:15px; border-radius:8px; border-left:4px solid {COR_AMARELO}; flex:1;'><b>💵 CAIXINHAS PAGAS:</b><br><span style='color:#FFF; font-size:18px;'>R$ {float(f_cx):.2f}</span></div><div style='background:#111; padding:15px; border-radius:8px; border-left:4px solid {COR_AMARELO}; flex:1;'><b>👕 MATERIAIS (SECRETARIA):</b><br><span style='color:#FFF; font-size:18px;'>R$ {float(f_sec):.2f}</span></div></div><br><a href='/tesouraria' class='btn-acao btn-dark' style='width:250px; margin:auto;'>⬅️ Voltar à Tesouraria</a></div></div></body></html>"
 
 # ==========================================
@@ -284,16 +312,17 @@ async def relatorio_geral(request: Request):
 @app.get("/oldgoose", response_class=HTMLResponse)
 async def menu_oldgoose(request: Request):
     role = request.session.get("role")
-    if not role or role not in ["admin", "diretoria", "old_goose", "caixa"]: return RedirectResponse("/central")
+    if not check_access(role, ["admin", "diretoria", "old_goose", "caixa", "tesoureiro"]): return RedirectResponse("/central")
     botoes = "<a href='/pdv' class='btn-acao' style='font-size: 18px; padding: 20px;'>🛒 PAINEL DE VENDAS (COMANDAS)</a>"
-    if role in ["admin", "diretoria", "old_goose"]:
+    if check_access(role, ["admin", "diretoria", "old_goose", "tesoureiro"]):
         botoes += "<a href='/estoque' class='btn-acao btn-dark' style='font-size: 18px; padding: 20px;'>📦 GESTÃO DE ESTOQUE E COMPRAS</a>"
         botoes += "<a href='/dashboard' class='btn-acao btn-red' style='font-size: 18px; padding: 20px;'>📊 RELATÓRIOS DO BAR</a>"
+    botoes += "<a href='/baixar_conector' class='btn-acao btn-dark' style='padding: 15px;'>🖨️ BAIXAR CONECTOR DE IMPRESSORA</a>"
     return f"<html><head>{CSS}</head><body><div class='container-center'><div class='card-center'>{IMG_LOGO_PEQ}<h2>🦉 MÓDULO OLD GOOSE (BAR)</h2><div style='display:flex; flex-direction:column; gap:12px; margin-top:20px;'>{botoes}</div><br><a href='/central' style='color:#777; text-decoration:none;'>⬅️ Voltar ao Hub Central</a></div></div></body></html>"
 
 @app.get("/pdv", response_class=HTMLResponse)
 async def pdv_painel(request: Request):
-    if request.session.get("role") not in ["admin", "diretoria", "old_goose", "caixa"]: return RedirectResponse("/central")
+    if not check_access(request.session.get("role"), ["admin", "diretoria", "old_goose", "caixa", "tesoureiro"]): return RedirectResponse("/central")
     linhas_comandas = ""
     with engine.connect() as conn:
         comandas_abertas = conn.execute(text("SELECT numero_comanda, total_conta FROM comandas WHERE status = 'ABERTA' ORDER BY id DESC")).fetchall()
@@ -322,12 +351,12 @@ async def abrir_avulso():
 
 @app.get("/pdv/comanda/{numero_comanda}", response_class=HTMLResponse)
 async def tela_comanda_detalhe(numero_comanda: str, request: Request):
-    if request.session.get("role") not in ["admin", "diretoria", "old_goose", "caixa"]: return RedirectResponse("/central")
+    if not check_access(request.session.get("role"), ["admin", "diretoria", "old_goose", "caixa", "tesoureiro"]): return RedirectResponse("/central")
     with engine.connect() as conn:
         comanda = conn.execute(text("SELECT numero_comanda, total_conta FROM comandas WHERE numero_comanda = :c AND status = 'ABERTA' ORDER BY id DESC LIMIT 1"), {"c": numero_comanda}).fetchone()
         if not comanda: return RedirectResponse("/pdv")
         itens_lançados = conn.execute(text("SELECT id, item_nome, valor FROM vendas_itens WHERE comanda_num = :c AND status = 'ABERTA' ORDER BY id DESC"), {"c": numero_comanda}).fetchall()
-        html_itens = "".join([f"<div style='display:flex; justify-content:space-between; padding:10px; border-bottom:1px dashed {COR_BORDA}; color:#FFF; align-items:center;'><span>{it.item_nome}</span><span>R$ {float(it.valor):.2f} <form action='/pdv/remover_item' method='post' style='display:inline; margin-left:15px;'><input type='hidden' name='item_id' value='{it.id}'><input type='hidden' name='num_comanda' value='{numero_comanda}'><button style='background:none; border:none; color:{COR_VERMELHO}; cursor:pointer; font-size:18px;' title='Estornar Item'>☒</button></form></span></div>" for it in itens_lançados])
+        html_itens = "".join([f"<div style='display:flex; justify-content:space-between; padding:10px; border-bottom:1px dashed {COR_BORDA}; color:#FFF; align-items:center;'><span>{it.item_nome}</span><span>R$ {float(it.valor):.2f} <form action='/pdv/remover_item' method='post' style='display:inline; margin-left:15px;'><input type='hidden' name='item_id' value='{it.id}'><input type='hidden' name='num_comanda' value='{numero_comanda}'><button style='background:none; border:none; color:{COR_VERMELHO}; cursor:pointer; font-size:18px;' title='Estornar'>☒</button></form></span></div>" for it in itens_lançados])
         produtos_db = conn.execute(text("SELECT id, nome, preco, estoque FROM produtos ORDER BY nome")).fetchall()
         html_produtos = ""
         for p in produtos_db:
@@ -360,122 +389,206 @@ async def pdv_remover_item(item_id: int = Form(...), num_comanda: str = Form(...
 async def finalizar_comanda(request: Request, comanda_num: str = Form(...), pagamento: str = Form(...)):
     nomes_pag = {"01": "DINHEIRO", "17": "PIX", "03": "C. CREDITO", "04": "C. DEBITO"}
     nome_pagamento = nomes_pag.get(pagamento, "OUTROS")
+    usuario = request.session.get("user", "Caixa")
     with engine.begin() as conn:
         comanda = conn.execute(text("SELECT total_conta FROM comandas WHERE numero_comanda = :c AND status = 'ABERTA' ORDER BY id DESC LIMIT 1"), {"c": comanda_num}).fetchone()
         if not comanda: return RedirectResponse(url="/pdv", status_code=303)
+        itens = conn.execute(text("SELECT item_nome, valor FROM vendas_itens WHERE comanda_num = :c AND status = 'ABERTA'"), {"c": comanda_num}).fetchall()
         conn.execute(text("UPDATE comandas SET status = 'FECHADA', forma_pagamento = :p, data_fechamento = CURRENT_TIMESTAMP WHERE numero_comanda = :c AND status = 'ABERTA'"), {"p": nome_pagamento, "c": comanda_num})
         conn.execute(text("UPDATE vendas_itens SET status = 'FECHADA' WHERE comanda_num = :c AND status = 'ABERTA'"), {"c": comanda_num})
+        txt = f"--------------------------------\n   STEEL GOOSE MOTO GROUP\nPLANALTO-DF\n--------------------------------\nCOMANDA: {comanda_num.upper()}\nOPERADOR: {usuario.upper()}\nDATA: {datetime.now().strftime('%d/%m/%Y %H:%M')}\n--------------------------------\n"
+        for idx, item in enumerate(itens): txt += f"1x {item.item_nome[:20]:<20} R$ {float(item.valor):.2f}\n"
+        txt += f"--------------------------------\nTOTAL: R$ {float(comanda.total_conta):.2f}\nPAGTO: {nome_pagamento}\n Obrigado! 🦅\n--------------------------------\n"
+        conn.execute(text("INSERT INTO fila_impressao (conteudo) VALUES (:txt)"), {"txt": txt})
     return HTMLResponse(f"<script>alert('Conta {comanda_num} fechada!'); window.location.href='/pdv';</script>")
 
 @app.get("/estoque", response_class=HTMLResponse)
 async def tela_estoque(request: Request):
-    if request.session.get("role") not in ["admin", "diretoria", "old_goose"]: return RedirectResponse("/central")
+    if not check_access(request.session.get("role"), ["admin", "diretoria", "old_goose", "tesoureiro"]): return RedirectResponse("/central")
     linhas = ""
     with engine.connect() as conn:
         prods_db = conn.execute(text("SELECT id, nome, categoria, preco, estoque FROM produtos ORDER BY nome")).fetchall()
         for r in prods_db:
             n_seguro = r.nome.replace('"', '').replace("'", "")
-            acoes = f"<div style='display:flex; gap:5px;'><button type='button' class='btn-acao' style='padding:8px; margin:0; background:#10b981; color:#000;' onclick='abrirModalEntrada({r.id}, \"{n_seguro}\")'>➕</button><button type='button' class='btn-acao btn-dark' style='padding:8px; margin:0;' onclick='abrirModal({r.id}, \"{n_seguro}\", \"{r.categoria}\", {float(r.preco or 0)})'>✏️</button><form action='/excluir_produto' method='post' style='margin:0;' onsubmit='return confirm(\"Excluir item?\");'><input type='hidden' name='id' value='{r.id}'><button class='btn-acao btn-red' style='padding:8px; margin:0;'>🗑️</button></form></div>"
+            acoes = f"<div style='display:flex; gap:5px;'><button type='button' class='btn-acao' style='padding:8px; margin:0; background:#10b981; color:#000;' onclick='abrirModalEntrada({r.id}, \"{n_seguro}\")' title='Compra'>➕</button><button type='button' class='btn-acao btn-dark' style='padding:8px; margin:0;' onclick='abrirModal({r.id}, \"{n_seguro}\", \"{r.categoria}\", {float(r.preco or 0)})' title='Editar'>✏️</button><form action='/excluir_produto' method='post' style='margin:0;' onsubmit='return confirm(\"Excluir item?\");'><input type='hidden' name='id' value='{r.id}'><button class='btn-acao btn-red' style='padding:8px; margin:0;'>🗑️</button></form></div>"
             linhas += f"<tr><td style='color:#FFF; font-weight:bold;'>{r.nome.upper()}</td><td style='color:{COR_AMARELO};'>R$ {float(r.preco or 0):.2f}</td><td style='color:#FFF; text-align:center;'>{int(r.estoque or 0)} un</td><td>{acoes}</td></tr>"
-    add_form = f"<div style='display:flex; justify-content:space-between; align-items:center; margin-bottom:15px;'><h3>📦 Produtos</h3><a href='/historico_compras' class='btn-acao btn-dark' style='width:auto; margin:0; padding:10px 15px; font-size:12px;'>📜 HISTÓRICO DE COMPRAS</a></div><div style='background:#0A0A0A; padding:20px; border-radius:10px; margin-bottom:20px; border:1px solid {COR_BORDA};'><h3>➕ CADASTRAR NOVO PRODUTO</h3><form action='/novo_produto' method='post' style='display:flex; flex-wrap:wrap; gap:10px;'><input name='nome' placeholder='Nome da Bebida' class='input-padrao' style='flex:2;' required><select name='cat' class='input-padrao' style='flex:1;'><option value='BEBIDAS'>BEBIDAS</option><option value='ALIMENTOS'>ALIMENTOS</option><option value='OUTROS'>OUTROS</option></select><input name='preco' placeholder='Preço de Venda' step='0.01' type='number' class='input-padrao' style='width:120px;' required><input name='qtd' type='number' placeholder='Qtd Estoque' class='input-padrao' style='width:150px;' required><button class='btn-acao' style='width:100%;'>SALVAR NO ESTOQUE</button></form></div>"
+            
+    add_form = f"<div style='display:flex; justify-content:space-between; align-items:center; margin-bottom:15px;'><h3>📦 Produtos</h3><a href='/historico_compras' class='btn-acao btn-dark' style='width:auto; margin:0; padding:10px 15px; font-size:12px;'>📜 HISTÓRICO DE COMPRAS</a></div><div style='background:#0A0A0A; padding:20px; border-radius:10px; margin-bottom:20px; border:1px solid {COR_BORDA};'><h3>➕ CADASTRAR PRODUTO NO BAR</h3><form action='/novo_produto' method='post' style='display:flex; flex-wrap:wrap; gap:10px;'><input name='nome' placeholder='Nome da Bebida / Item' class='input-padrao' style='flex:2;' required><select name='cat' class='input-padrao' style='flex:1;'><option value='BEBIDAS'>BEBIDAS</option><option value='ALIMENTOS'>ALIMENTOS</option><option value='OUTROS'>OUTROS</option></select><input name='preco' placeholder='Preço de Venda' step='0.01' type='number' class='input-padrao' style='width:120px;' required><input name='qtd' type='number' placeholder='Qtd Estoque Inicial' class='input-padrao' style='width:150px;' required><button class='btn-acao' style='width:100%;'>SALVAR NO ESTOQUE</button></form></div>"
     modal_edit = f"<div id='editModal' style='display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.8); z-index:1000; align-items:center; justify-content:center;'><div class='card-center' style='position:relative; width:90%; max-width:400px; padding:20px; background:#121214;'><span onclick='document.getElementById(\"editModal\").style.display=\"none\"' style='position:absolute; top:10px; right:15px; cursor:pointer; font-size:24px; color:#FFF;'>&times;</span><h3 style='margin-top:0;'>✏️ EDITAR PRODUTO</h3><form action='/editar_produto' method='post' style='display:flex; flex-direction:column; gap:10px;'><input type='hidden' name='id' id='edit_id'><input name='nome' id='edit_nome' class='input-padrao' required><select name='cat' id='edit_cat' class='input-padrao' required><option value='BEBIDAS'>BEBIDAS</option><option value='ALIMENTOS'>ALIMENTOS</option><option value='OUTROS'>OUTROS</option></select><input name='preco' id='edit_preco' type='number' step='0.01' class='input-padrao' required><button class='btn-acao' style='margin-top:10px;'>SALVAR ALTERAÇÕES</button></form></div></div>"
-    modal_entrada = f"<div id='entradaModal' style='display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.8); z-index:1000; align-items:center; justify-content:center;'><div class='card-center' style='position:relative; width:90%; max-width:400px; padding:20px; background:#121214; border:1px solid {COR_BORDA};'><span onclick='document.getElementById(\"entradaModal\").style.display=\"none\"' style='position:absolute; top:10px; right:15px; cursor:pointer; font-size:24px; color:#FFF;'>&times;</span><h3 style='margin-top:0; color:#10b981;'>📥 REGISTRAR COMPRA</h3><form action='/att_estoque' method='post' style='display:flex; flex-direction:column; gap:10px;'><input type='hidden' name='id' id='entrada_id'><p style='color:#FFF; text-align:left; margin:0;'>Produto: <b id='entrada_nome' style='color:#10b981; text-transform:uppercase;'></b></p><div><label style='font-size:12px; color:#aaa; font-weight:bold;'>QTD (UN):</label><input name='q' type='number' class='input-padrao' required autocomplete='off'></div><div><label style='font-size:12px; color:#aaa; font-weight:bold;'>CUSTO TOTAL (R$):</label><input name='custo' type='number' step='0.01' class='input-padrao' placeholder='Ex: 150.00' required></div><button class='btn-acao' style='background:#10b981; margin-top:10px;'>SALVAR ENTRADA</button></form></div></div>"
+    modal_entrada = f"<div id='entradaModal' style='display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.8); z-index:1000; align-items:center; justify-content:center;'><div class='card-center' style='position:relative; width:90%; max-width:400px; padding:20px; background:#121214; border:1px solid {COR_BORDA};'><span onclick='document.getElementById(\"entradaModal\").style.display=\"none\"' style='position:absolute; top:10px; right:15px; cursor:pointer; font-size:24px; color:#FFF;'>&times;</span><h3 style='margin-top:0; color:#10b981;'>📥 REGISTRAR COMPRA</h3><form action='/att_estoque' method='post' style='display:flex; flex-direction:column; gap:10px;'><input type='hidden' name='id' id='entrada_id'><p style='color:#FFF; text-align:left; margin:0;'>Produto: <b id='entrada_nome' style='color:#10b981; text-transform:uppercase;'></b></p><div><label style='font-size:12px; color:#aaa; font-weight:bold;'>QUANTIDADE COMPRADA (UN):</label><input name='q' type='number' class='input-padrao' required autocomplete='off'></div><div><label style='font-size:12px; color:#aaa; font-weight:bold;'>VALOR TOTAL PAGO (R$):</label><input name='custo' type='number' step='0.01' class='input-padrao' placeholder='Ex: 150.00' required></div><button class='btn-acao' style='background:#10b981; margin-top:10px;'>SALVAR ENTRADA</button></form></div></div>"
     js_modal = "<script>function abrirModal(id, nome, cat, preco) { document.getElementById('edit_id').value = id; document.getElementById('edit_nome').value = nome; document.getElementById('edit_cat').value = cat; document.getElementById('edit_preco').value = preco; document.getElementById('editModal').style.display = 'flex'; } function abrirModalEntrada(id, nome) { document.getElementById('entrada_id').value = id; document.getElementById('entrada_nome').innerText = nome; document.getElementById('entradaModal').style.display = 'flex'; }</script>"
-    return f"<html><head>{CSS}{js_modal}</head><body>{modal_edit}{modal_entrada}<div class='container-center'><div class='card-center' style='max-width:800px;'>{IMG_LOGO_PEQ}<h2>📦 Estoque</h2>{add_form}<div style='max-height:400px; overflow-y:auto; border:1px solid {COR_BORDA};'><table><tr><th>Produto</th><th>Preço</th><th>Qtd</th><th>Ações</th></tr>{linhas}</table></div><br><a href='/oldgoose' class='btn-acao btn-dark' style='width:200px; margin:auto;'>⬅️ Voltar ao Old Goose</a></div></div></body></html>"
+    return f"<html><head>{CSS}{js_modal}</head><body>{modal_edit}{modal_entrada}<div class='container-center'><div class='card-center' style='max-width:800px;'>{IMG_LOGO_PEQ}<h2>📦 Estoque</h2>{add_form}<div style='max-height:400px; overflow-y:auto; border:1px solid {COR_BORDA};'><table><tr><th>Produto</th><th>Preço</th><th>Qtd Atual</th><th>Ações</th></tr>{linhas}</table></div><br><a href='/oldgoose' class='btn-acao btn-dark' style='width:200px; margin:auto;'>⬅️ Voltar ao Old Goose</a></div></div></body></html>"
 
 @app.post("/novo_produto")
 async def novo_produto(request: Request):
-    if request.session.get("role") not in ["admin", "diretoria", "old_goose"]: return RedirectResponse("/central")
+    if not check_access(request.session.get("role"), ["admin", "diretoria", "old_goose", "tesoureiro"]): return RedirectResponse("/central")
     f = await request.form()
     try:
         with engine.begin() as conn: conn.execute(text("INSERT INTO produtos (codigo_barras, nome, categoria, preco, estoque) VALUES (:cb, :n, :c, :p, :q)"), {"cb": "SG-"+datetime.now().strftime("%f"), "n": f.get("nome").upper(), "c": f.get("cat"), "p": float(f.get("preco").replace(",", ".")), "q": int(f.get("qtd"))})
     except: pass
-    return RedirectResponse("/estoque", status_code=303)
+    return RedirectResponse(url="/estoque", status_code=303)
 
 @app.post("/att_estoque")
 async def att_estoque(request: Request):
-    if request.session.get("role") not in ["admin", "diretoria", "old_goose"]: return RedirectResponse("/central")
+    if not check_access(request.session.get("role"), ["admin", "diretoria", "old_goose", "tesoureiro"]): return RedirectResponse("/central")
     f = await request.form()
+    prod_id = f.get("id")
+    qtd = int(f.get("q", "0"))
+    custo = float(f.get("custo", "0").replace(",", "."))
     try:
         with engine.begin() as conn: 
-            prod = conn.execute(text("SELECT nome FROM produtos WHERE id = :id"), {"id": f.get("id")}).fetchone()
+            prod = conn.execute(text("SELECT nome FROM produtos WHERE id = :id"), {"id": prod_id}).fetchone()
             if prod:
-                conn.execute(text("UPDATE produtos SET estoque = COALESCE(estoque, 0) + :q WHERE id = :id"), {"id": f.get("id"), "q": int(f.get("q", "0"))})
-                conn.execute(text("INSERT INTO historico_estoque (produto_nome, qtd_adicionada, valor_custo, data_entrada) VALUES (:n, :q, :c, CURRENT_DATE)"), {"n": prod.nome, "q": int(f.get("q", "0")), "c": float(f.get("custo", "0").replace(",", "."))})
+                conn.execute(text("UPDATE produtos SET estoque = COALESCE(estoque, 0) + :q WHERE id = :id"), {"id": prod_id, "q": qtd})
+                conn.execute(text("INSERT INTO historico_estoque (produto_nome, qtd_adicionada, valor_custo, data_entrada) VALUES (:n, :q, :c, CURRENT_DATE)"), {"n": prod.nome, "q": qtd, "c": custo})
     except: pass
-    return RedirectResponse("/estoque", status_code=303)
-
-@app.post("/editar_produto")
-async def editar_produto(request: Request):
-    if request.session.get("role") not in ["admin", "diretoria", "old_goose"]: return RedirectResponse("/central")
-    f = await request.form()
-    try:
-        with engine.begin() as conn: conn.execute(text("UPDATE produtos SET nome = :n, categoria = :c, preco = :p WHERE id = :id"), {"n": f.get("nome").upper(), "c": f.get("cat"), "p": float(f.get("preco").replace(",", ".")), "id": f.get("id")})
-    except: pass
-    return RedirectResponse("/estoque", status_code=303)
-
-@app.post("/excluir_produto")
-async def excluir_produto(request: Request):
-    if request.session.get("role") not in ["admin", "diretoria", "old_goose"]: return RedirectResponse("/central")
-    f = await request.form()
-    try:
-        with engine.begin() as conn: conn.execute(text("DELETE FROM produtos WHERE id = :id"), {"id": f.get("id")})
-    except: pass
-    return RedirectResponse("/estoque", status_code=303)
+    return RedirectResponse(url="/estoque", status_code=303)
 
 @app.get("/historico_compras", response_class=HTMLResponse)
 async def historico_compras(request: Request):
-    if request.session.get("role") not in ["admin", "diretoria", "old_goose"]: return RedirectResponse("/central")
+    if not check_access(request.session.get("role"), ["admin", "diretoria", "old_goose", "tesoureiro"]): return RedirectResponse("/central")
     linhas = ""
     with engine.connect() as conn:
         hist = conn.execute(text("SELECT produto_nome, qtd_adicionada, valor_custo, data_entrada FROM historico_estoque ORDER BY id DESC LIMIT 100")).fetchall()
         for r in hist:
             custo_unit = float(r.valor_custo)/r.qtd_adicionada if r.qtd_adicionada > 0 else 0
             linhas += f"<tr><td style='color:#FFF; font-weight:bold;'>{r.produto_nome}</td><td style='color:{COR_AMARELO}; text-align:center;'>{r.qtd_adicionada}</td><td style='color:#FFF; text-align:right;'>R$ {float(r.valor_custo):.2f}<br><small style='color:#888;'>R$ {custo_unit:.2f}/un</small></td><td style='color:#888; text-align:right;'>{r.data_entrada}</td></tr>"
-    return f"<html><head>{CSS}</head><body><div class='container-center'><div class='card-center' style='max-width:800px;'>{IMG_LOGO_PEQ}<h2>📜 Histórico de Compras</h2><div style='max-height:500px; overflow-y:auto; border:1px solid {COR_BORDA};'><table><thead style='background:#0A0A0A; position:sticky; top:0;'><tr><th>Produto</th><th style='text-align:center;'>Qtd</th><th style='text-align:right;'>Custo Total</th><th style='text-align:right;'>Data</th></tr></thead><tbody>{linhas if linhas else '<tr><td colspan=\"4\" style=\"text-align:center; color:#777;\">Nenhum registro.</td></tr>'}</tbody></table></div><br><a href='/estoque' class='btn-acao btn-dark' style='width:200px; margin:auto;'>⬅️ Voltar ao Estoque</a></div></div></body></html>"
+    return f"<html><head>{CSS}</head><body><div class='container-center'><div class='card-center' style='max-width:800px;'>{IMG_LOGO_PEQ}<h2>📜 Histórico de Compras</h2><div style='max-height:500px; overflow-y:auto; border:1px solid {COR_BORDA};'><table><thead style='background:#0A0A0A; position:sticky; top:0;'><tr><th>Produto</th><th style='text-align:center;'>Qtd Comprada</th><th style='text-align:right;'>Custo Total</th><th style='text-align:right;'>Data</th></tr></thead><tbody>{linhas if linhas else '<tr><td colspan=\"4\" style=\"text-align:center; color:#777;\">Nenhum registro encontrado.</td></tr>'}</tbody></table></div><br><a href='/estoque' class='btn-acao btn-dark' style='width:200px; margin:auto;'>⬅️ Voltar ao Estoque</a></div></div></body></html>"
+
+@app.post("/editar_produto")
+async def editar_produto(request: Request):
+    if not check_access(request.session.get("role"), ["admin", "diretoria", "old_goose", "tesoureiro"]): return RedirectResponse("/central")
+    f = await request.form()
+    try:
+        with engine.begin() as conn: conn.execute(text("UPDATE produtos SET nome = :n, categoria = :c, preco = :p WHERE id = :id"), {"n": f.get("nome").upper(), "c": f.get("cat"), "p": float(f.get("preco").replace(",", ".")), "id": f.get("id")})
+    except: pass
+    return RedirectResponse(url="/estoque", status_code=303)
+
+@app.post("/excluir_produto")
+async def excluir_produto(request: Request):
+    if not check_access(request.session.get("role"), ["admin", "diretoria", "old_goose", "tesoureiro"]): return RedirectResponse("/central")
+    f = await request.form()
+    try:
+        with engine.begin() as conn: conn.execute(text("DELETE FROM produtos WHERE id = :id"), {"id": f.get("id")})
+    except: pass
+    return RedirectResponse(url="/estoque", status_code=303)
 
 @app.get("/dashboard", response_class=HTMLResponse)
 async def dashboard(request: Request, inicio: str = "", fim: str = "", tipo_venda: str = "TODOS"):
-    if request.session.get("role") not in ["admin", "diretoria", "old_goose"]: return RedirectResponse("/central")
+    if not check_access(request.session.get("role"), ["admin", "diretoria", "old_goose", "tesoureiro"]): return RedirectResponse("/central")
     dt_inicio = inicio if inicio else date.today().strftime("%Y-%m-%d")
     dt_fim = fim if fim else date.today().strftime("%Y-%m-%d")
+    
     where_clause = "status = 'FECHADA' AND CAST(data_fechamento AS DATE) BETWEEN CAST(:inicio AS DATE) AND CAST(:fim AS DATE)"
-    if tipo_venda and tipo_venda != "TODOS": where_clause += f" AND forma_pagamento = '{tipo_venda}'"
+    params = {"inicio": dt_inicio, "fim": dt_fim}
+    if tipo_venda and tipo_venda != "TODOS":
+        where_clause += " AND forma_pagamento = :tipo"
+        params["tipo"] = tipo_venda
+
+    where_estorno = "status = 'ESTORNADO' AND CAST(data_venda AS DATE) BETWEEN CAST(:inicio AS DATE) AND CAST(:fim AS DATE)"
+    
     with engine.connect() as conn:
-        kpi = conn.execute(text(f"SELECT SUM(total_conta) as total FROM comandas WHERE {where_clause}"), {"inicio": dt_inicio, "fim": dt_fim}).fetchone()
-        faturamento = float(kpi.total or 0)
-        est = conn.execute(text(f"SELECT COUNT(*) as qtd, SUM(valor) as total FROM vendas_itens WHERE status = 'ESTORNADO' AND CAST(data_venda AS DATE) BETWEEN CAST(:inicio AS DATE) AND CAST(:fim AS DATE)"), {"inicio": dt_inicio, "fim": dt_fim}).fetchone()
-        tot_estornado = float(est.total or 0)
-        itens_db = conn.execute(text(f"SELECT item_nome, COUNT(*) as qtd, SUM(valor) as t FROM vendas_itens WHERE status = 'FECHADA' AND comanda_num IN (SELECT numero_comanda FROM comandas WHERE {where_clause}) GROUP BY item_nome ORDER BY qtd DESC"), {"inicio": dt_inicio, "fim": dt_fim}).fetchall()
-        linhas_tabela = "".join([f"<tr><td style='color:#FFF;'>{it.item_nome}</td><td style='color:{COR_AMARELO}; text-align:center;'>{it.qtd}</td><td style='color:#FFF; text-align:right;'>R$ {float(it.t):.2f}</td></tr>" for it in itens_db])
-    return f"<html><head>{CSS}</head><body><div class='container-center'><div class='card-center' style='max-width:850px;'>{IMG_LOGO_PEQ}<h2>📊 Relatório do Bar</h2><form method='get' class='filtro-box'><div style='flex:1;'><label>Data Início:</label><br><input type='date' name='inicio' value='{dt_inicio}' class='input-padrao'></div><div style='flex:1;'><label>Data Fim:</label><br><input type='date' name='fim' value='{dt_fim}' class='input-padrao'></div><div style='display:flex; align-items:flex-end;'><button class='btn-acao' style='margin:0; height:48px;'>FILTRAR</button></div></form><div class='grid-dash'><div class='card-kpi'><h3>Faturamento do Período</h3><p>R$ {faturamento:.2f}</p></div><div class='card-kpi' style='border-left-color:{COR_VERMELHO};'><h3>Total Estornado</h3><p style='color:{COR_VERMELHO};'>R$ {tot_estornado:.2f}</p></div></div><div class='chart-container'><h3>📋 ITENS VENDIDOS</h3><table style='margin-top:0;'><thead><tr><th style='color:{COR_AMARELO};'>Produto</th><th style='color:{COR_AMARELO}; text-align:center;'>Qtd</th><th style='color:{COR_AMARELO}; text-align:right;'>Arrecadado</th></tr></thead><tbody>{linhas_tabela if linhas_tabela else "<tr><td colspan='3' style='text-align:center;'>Nenhuma venda.</td></tr>"}</tbody></table></div><br><a href='/oldgoose' class='btn-acao btn-dark' style='width:250px; margin:auto;'>⬅️ Voltar ao Old Goose</a></div></div></body></html>"
+        kpi = conn.execute(text(f"SELECT SUM(total_conta) as total FROM comandas WHERE {where_clause}"), params).fetchone()
+        faturamento_filtrado = float(kpi.total or 0)
+        
+        pag_q = conn.execute(text(f"SELECT forma_pagamento, SUM(total_conta) as total FROM comandas WHERE {where_clause} GROUP BY forma_pagamento"), params).fetchall()
+        totais_pag = {"DINHEIRO": 0.0, "PIX": 0.0, "C. CREDITO": 0.0, "C. DEBITO": 0.0}
+        for p in pag_q: 
+            if p.forma_pagamento in totais_pag: totais_pag[p.forma_pagamento] = float(p.total or 0)
+
+        estornos_kpi = conn.execute(text(f"SELECT COUNT(*) as qtd, SUM(valor) as total FROM vendas_itens WHERE {where_estorno}"), {"inicio": dt_inicio, "fim": dt_fim}).fetchone()
+        total_estornado = float(estornos_kpi.total or 0)
+        qtd_estornada = int(estornos_kpi.qtd or 0)
+            
+        itens_db = conn.execute(text(f"SELECT item_nome, COUNT(*) as qtd, SUM(valor) as t FROM vendas_itens WHERE status = 'FECHADA' AND comanda_num IN (SELECT numero_comanda FROM comandas WHERE {where_clause}) GROUP BY item_nome ORDER BY qtd DESC"), params).fetchall()
+        linhas_tabela = "".join([f"<tr><td style='color:#FFF; font-weight:bold;'>{it.item_nome}</td><td style='color:{COR_AMARELO}; text-align:center;'>{it.qtd}</td><td style='color:#FFF; text-align:right;'>R$ {float(it.t):.2f}</td></tr>" for it in itens_db])
+
+    opcoes_select = f"<option value='TODOS' {'selected' if tipo_venda == 'TODOS' else ''}>⚙️ TODOS OS TIPOS</option><option value='DINHEIRO' {'selected' if tipo_venda == 'DINHEIRO' else ''}>💵 DINHEIRO</option><option value='PIX' {'selected' if tipo_venda == 'PIX' else ''}>💠 PIX</option><option value='C. CREDITO' {'selected' if tipo_venda == 'C. CREDITO' else ''}>💳 CARTÃO CRÉDITO</option><option value='C. DEBITO' {'selected' if tipo_venda == 'C. DEBITO' else ''}>💳 CARTÃO DÉBITO</option>"
+    
+    return f"""<html><head>{CSS}</head><body><div class='container-center'><div class='card-center' style='max-width:850px;'>
+        {IMG_LOGO_PEQ}<h2>📊 Relatório do Bar</h2>
+        <form method='get' class='filtro-box'><div style='flex:1; min-width:140px;'><label>Data Inicial:</label><br><input type='date' name='inicio' value='{dt_inicio}' class='input-padrao' style='margin:5px 0 0 0; padding:8px;'></div><div style='flex:1; min-width:140px;'><label>Data Final:</label><br><input type='date' name='fim' value='{dt_fim}' class='input-padrao' style='margin:5px 0 0 0; padding:8px;'></div><div style='flex:1; min-width:160px;'><label>Tipo de Venda:</label><br><select name='tipo_venda' class='input-padrao' style='margin:5px 0 0 0; padding:8px;'>{opcoes_select}</select></div><div style='display:flex; align-items:flex-end; min-width:100px;'><button class='btn-acao' style='margin:0; height:41px;'>FILTRAR</button></div></form>
+        <div class='grid-dash'><div class='card-kpi'><h3>Faturamento do Período</h3><p>R$ {faturamento_filtrado:.2f}</p></div><div class='card-kpi' style='border-left-color:{COR_VERMELHO};'><h3>Total Estornado (Devolvido)</h3><p style='color:{COR_VERMELHO};'>R$ {total_estornado:.2f} <small style='font-size:14px; color:#888;'>({qtd_estornada} itens)</small></p></div></div>
+        <div style='display:flex; justify-content:space-between; flex-wrap:wrap; gap:10px; margin-bottom:20px;'><div style='background:#111; padding:15px; border-radius:8px; border-left:4px solid {COR_AMARELO}; flex:1;'><b>💵 Dinheiro:</b><br><span style='color:#FFF;'>R$ {totais_pag['DINHEIRO']:.2f}</span></div><div style='background:#111; padding:15px; border-radius:8px; border-left:4px solid {COR_AMARELO}; flex:1;'><b>💠 PIX:</b><br><span style='color:#FFF;'>R$ {totais_pag['PIX']:.2f}</span></div><div style='background:#111; padding:15px; border-radius:8px; border-left:4px solid {COR_AMARELO}; flex:1;'><b>💳 Cartões:</b><br><span style='color:#FFF;'>R$ {(totais_pag['C. CREDITO'] + totais_pag['C. DEBITO']):.2f}</span></div></div>
+        <div class='chart-container' style='padding: 15px;'><h3 style='border-bottom:2px solid {COR_BORDA}; padding-bottom:5px; margin-top:0;'>📋 LISTA DE ITENS VENDIDOS</h3><div style='max-height:300px; overflow-y:auto;'><table style='margin-top:0;'><thead style='background:#0A0A0A; position:sticky; top:0; box-shadow: 0 2px 4px rgba(0,0,0,0.8);'><tr><th style='color:{COR_AMARELO};'>Produto</th><th style='color:{COR_AMARELO}; text-align:center;'>Qtd</th><th style='color:{COR_AMARELO}; text-align:right;'>Total Arrecadado (R$)</th></tr></thead><tbody>{linhas_tabela if linhas_tabela else "<tr><td colspan='3' style='color:#777; text-align:center;'>Nenhuma venda encontrada no período.</td></tr>"}</tbody></table></div></div>
+        <br><a href='/oldgoose' class='btn-acao btn-dark' style='width:250px; margin:auto;'>⬅️ Voltar ao Old Goose</a>
+    </div></div></body></html>"""
+
 
 # ==========================================
-# DIRETORIA E USUÁRIOS
+# MÓDULO DIRETORIA: CONTROLE DE USUÁRIOS E ACESSOS MULTIPLOS
 # ==========================================
 @app.get("/usuarios", response_class=HTMLResponse)
 async def tela_usuarios(request: Request):
-    if request.session.get("role") not in ["admin", "diretoria"]: return RedirectResponse("/central")
+    role_session = request.session.get("role")
+    if not check_access(role_session, ["admin", "diretoria"]): return RedirectResponse(url="/central")
     linhas = ""
     with engine.connect() as conn:
-        users_db = conn.execute(text("SELECT id, username, email, role, status FROM usuarios ORDER BY status DESC, role, username")).fetchall()
+        users_db = conn.execute(text("SELECT id, username, email, role, status FROM usuarios ORDER BY status DESC, username")).fetchall()
         for r in users_db:
             acoes = ""
             if r.username != "admin":
-                btn_block = f"<form action='/toggle_usuario' method='post' style='margin:0;'><input type='hidden' name='id' value='{r.id}'><button class='btn-acao' style='background:#10b981; padding:8px; margin:0;' title='Aprovar'>🔓</button></form>" if r.status == 'BLOQUEADO' else f"<form action='/toggle_usuario' method='post' style='margin:0;'><input type='hidden' name='id' value='{r.id}'><button class='btn-acao' style='background:#f59e0b; padding:8px; margin:0;' title='Bloquear'>🔒</button></form>"
-                btn_del = f"<form action='/excluir_usuario' method='post' style='margin:0;' onsubmit='return confirm(\"Excluir?\");'><input type='hidden' name='id' value='{r.id}'><button class='btn-acao btn-red' style='padding:8px; margin:0;'>🗑️</button></form>"
-                acoes = f"<div style='display:flex; gap:5px;'>{btn_block}<button type='button' class='btn-acao btn-dark' style='padding:8px; margin:0;' onclick='abrirModalAcesso({r.id}, \"{r.username}\", \"{r.role}\")'>⚙️</button>{btn_del}</div>"
-            st_badge = f"<span style='color:#10b981; font-weight:bold;'>ATIVO</span>" if r.status == 'ATIVO' else f"<span style='color:{COR_VERMELHO}; font-weight:bold;'>PENDENTE</span>"
-            linhas += f"<tr><td><b style='color:#FFF;'>{r.username.upper()}</b><br><small style='color:#888;'>{r.email or 'S/ Email'}</small></td><td style='color:{COR_AMARELO};'>{r.role.upper().replace('_', ' ')}</td><td>{st_badge}</td><td>{acoes}</td></tr>"
-    opcoes_cargos = "<option value='candidato'>CANDIDATO</option><option value='membro'>MEMBRO</option><option value='secretario'>SECRETÁRIO</option><option value='tesoureiro'>TESOUREIRO</option><option value='rp'>RELAÇÕES PÚBLICAS</option><option value='diretoria'>DIRETORIA</option><option value='ouvidoria'>OUVIDORIA</option><option value='old_goose'>OLD GOOSE</option><option value='caixa'>CAIXA DO BAR</option>"
-    add_form = f"<div style='background:#0A0A0A; padding:20px; border-radius:10px; margin-bottom:20px; border:1px solid {COR_BORDA};'><h3>➕ CRIAR ACESSO MANUAL</h3><form action='/novo_usuario_direto' method='post' style='display:flex; flex-wrap:wrap; gap:10px;'><input name='u' placeholder='Login' class='input-padrao' style='flex:1;' required><input name='e' type='email' placeholder='E-mail' class='input-padrao' style='flex:1;' required><input name='p' type='password' placeholder='Senha' class='input-padrao' style='flex:1;' required><select name='r' class='input-padrao' style='flex:1;'>{opcoes_cargos}</select><button class='btn-acao' style='width:100%;'>SALVAR</button></form></div>"
-    modal_acesso = f"<div id='acessoModal' style='display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.8); z-index:1000; align-items:center; justify-content:center;'><div class='card-center' style='position:relative; width:90%; max-width:400px; padding:20px; background:#121214;'><span onclick='document.getElementById(\"acessoModal\").style.display=\"none\"' style='position:absolute; top:10px; right:15px; cursor:pointer; font-size:24px; color:#FFF;'>&times;</span><h3 style='margin-top:0;'>⚙️ ALTERAR ACESSO</h3><form action='/alterar_acesso' method='post' style='display:flex; flex-direction:column; gap:10px;'><input type='hidden' name='id' id='acesso_id'><p style='color:#FFF; text-align:left; margin:0;'>Usuário: <b id='acesso_user' style='color:{COR_AMARELO};'></b></p><select name='role' id='acesso_role' class='input-padrao' required>{opcoes_cargos}</select><button class='btn-acao' style='margin-top:10px;'>SALVAR</button></form></div></div>"
-    js_modal_acesso = "<script>function abrirModalAcesso(id, user, role) { document.getElementById('acesso_id').value = id; document.getElementById('acesso_user').innerText = user; document.getElementById('acesso_role').value = role; document.getElementById('acessoModal').style.display = 'flex'; }</script>"
-    return f"<html><head>{CSS}{js_modal_acesso}</head><body>{modal_acesso}<div class='container-center'><div class='card-center' style='max-width:900px;'>{IMG_LOGO_PEQ}<h2>Aprovações e Usuários</h2>{add_form}<div style='max-height:400px; overflow-y:auto; border:1px solid {COR_BORDA};'><table><tr><th>Usuário</th><th>Cargo</th><th>Status</th><th>Ações</th></tr>{linhas}</table></div><br><a href='/diretoria' class='btn-acao btn-dark' style='width:250px; margin:auto;'>⬅️ Voltar à Diretoria</a></div></div></body></html>"
+                if r.status == 'BLOQUEADO': btn_block = f"<form action='/toggle_usuario' method='post' style='margin:0;'><input type='hidden' name='id' value='{r.id}'><button class='btn-acao' style='background:#10b981; padding:8px; margin:0;' title='Aprovar Acesso'>🔓</button></form>"
+                else: btn_block = f"<form action='/toggle_usuario' method='post' style='margin:0;'><input type='hidden' name='id' value='{r.id}'><button class='btn-acao' style='background:#f59e0b; padding:8px; margin:0;' title='Bloquear'>🔒</button></form>"
+                
+                btn_edit_acesso = f"<button type='button' class='btn-acao btn-dark' style='padding:8px; margin:0;' onclick='abrirModalAcesso({r.id}, \"{r.username}\", \"{r.role}\")' title='Alterar Cargo do Membro'>⚙️</button>"
+                btn_del = f"<form action='/excluir_usuario' method='post' style='margin:0;' onsubmit='return confirm(\"Excluir membro permanentemente?\");'><input type='hidden' name='id' value='{r.id}'><button class='btn-acao btn-red' style='padding:8px; margin:0;'>🗑️</button></form>"
+                acoes = f"<div style='display:flex; gap:5px;'>{btn_block}{btn_edit_acesso}{btn_del}</div>"
+            st_badge = f"<span style='color:#10b981; font-weight:bold;'>ATIVO</span>" if r.status == 'ATIVO' else f"<span style='color:{COR_VERMELHO}; font-weight:bold;'>PENDENTE/BLOQ.</span>"
+            role_display = r.role.replace(',', ', ').upper()
+            linhas += f"<tr><td><b style='color:#FFF;'>{r.username.upper()}</b><br><small style='color:#888;'>{r.email or 'S/ Email'}</small></td><td style='color:{COR_AMARELO}; font-weight:bold; font-size:11px;'>{role_display}</td><td>{st_badge}</td><td>{acoes}</td></tr>"
+            
+    # Formulário de Adição com Múltiplas Escolhas
+    caixas_add = f"""
+    <div style='display:grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap:10px; background:#141416; padding:15px; border-radius:8px; border:1px solid {COR_BORDA};'>
+        <label class='checkbox-grid'><input type='checkbox' name='roles' value='candidato'> Candidato</label>
+        <label class='checkbox-grid'><input type='checkbox' name='roles' value='membro' checked> Membro</label>
+        <label class='checkbox-grid'><input type='checkbox' name='roles' value='secretario'> Secretaria</label>
+        <label class='checkbox-grid'><input type='checkbox' name='roles' value='tesoureiro'> Tesouraria</label>
+        <label class='checkbox-grid'><input type='checkbox' name='roles' value='rp'> Rel. Públicas</label>
+        <label class='checkbox-grid'><input type='checkbox' name='roles' value='old_goose'> Old Goose</label>
+        <label class='checkbox-grid'><input type='checkbox' name='roles' value='caixa'> Caixa do Bar</label>
+        <label class='checkbox-grid'><input type='checkbox' name='roles' value='diretoria'> Diretoria</label>
+        <label class='checkbox-grid'><input type='checkbox' name='roles' value='admin'> Admin</label>
+    </div>
+    """
+    
+    caixas_edit = f"""
+    <div style='display:grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap:10px; background:#000; padding:15px; border-radius:8px; border:1px solid {COR_BORDA}; margin-top:10px;'>
+        <label class='checkbox-grid'><input type='checkbox' name='roles' class='edit-role-cb' id='cb_edit_candidato' value='candidato'> Candidato</label>
+        <label class='checkbox-grid'><input type='checkbox' name='roles' class='edit-role-cb' id='cb_edit_membro' value='membro'> Membro</label>
+        <label class='checkbox-grid'><input type='checkbox' name='roles' class='edit-role-cb' id='cb_edit_secretario' value='secretario'> Secretaria</label>
+        <label class='checkbox-grid'><input type='checkbox' name='roles' class='edit-role-cb' id='cb_edit_tesoureiro' value='tesoureiro'> Tesouraria</label>
+        <label class='checkbox-grid'><input type='checkbox' name='roles' class='edit-role-cb' id='cb_edit_rp' value='rp'> Rel. Públicas</label>
+        <label class='checkbox-grid'><input type='checkbox' name='roles' class='edit-role-cb' id='cb_edit_old_goose' value='old_goose'> Old Goose</label>
+        <label class='checkbox-grid'><input type='checkbox' name='roles' class='edit-role-cb' id='cb_edit_caixa' value='caixa'> Caixa do Bar</label>
+        <label class='checkbox-grid'><input type='checkbox' name='roles' class='edit-role-cb' id='cb_edit_diretoria' value='diretoria'> Diretoria</label>
+        <label class='checkbox-grid'><input type='checkbox' name='roles' class='edit-role-cb' id='cb_edit_admin' value='admin'> Admin</label>
+    </div>
+    """
+
+    add_form = f"<div style='background:#0A0A0A; padding:20px; border-radius:10px; margin-bottom:20px; border:1px solid {COR_BORDA};'><h3>➕ CRIAR ACESSO MANUAL</h3><form action='/novo_usuario_direto' method='post' style='display:flex; flex-direction:column; gap:10px;'><div style='display:flex; gap:10px; flex-wrap:wrap;'><input name='u' placeholder='Login' class='input-padrao' style='flex:1;' required><input name='e' type='email' placeholder='E-mail' class='input-padrao' style='flex:1;' required><input name='p' type='password' placeholder='Senha' class='input-padrao' style='flex:1;' required></div><label style='font-size:12px; color:#aaa; font-weight:bold;'>PERMISSÕES (Múltiplas escolhas):</label>{caixas_add}<button class='btn-acao' style='width:100%;'>SALVAR USUÁRIO</button></form></div>"
+    
+    modal_acesso = f"""
+    <div id='acessoModal' style='display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.8); z-index:1000; align-items:center; justify-content:center;'>
+        <div class='card-center' style='position:relative; width:90%; max-width:500px; padding:20px; background:#121214;'>
+            <span onclick='fecharModalAcesso()' style='position:absolute; top:10px; right:15px; cursor:pointer; font-size:24px; color:#FFF;'>&times;</span>
+            <h3 style='margin-top:0; color:{COR_AMARELO};'>⚙️ ALTERAR PERMISSÕES</h3>
+            <form action='/alterar_acesso' method='post' style='display:flex; flex-direction:column; gap:10px;'>
+                <input type='hidden' name='id' id='acesso_id'>
+                <p style='color:#FFF; text-align:left; margin:0;'>Usuário: <b id='acesso_user' style='color:{COR_AMARELO}; text-transform:uppercase;'></b></p>
+                {caixas_edit}
+                <button class='btn-acao' style='margin-top:10px;'>SALVAR ACESSOS</button>
+            </form>
+        </div>
+    </div>
+    """
+    js_modal_acesso = "<script>function abrirModalAcesso(id, user, roles_str) { document.getElementById('acesso_id').value = id; document.getElementById('acesso_user').innerText = user; let checkboxes = document.querySelectorAll('.edit-role-cb'); checkboxes.forEach(cb => cb.checked = false); if(roles_str) { let roles = roles_str.split(','); roles.forEach(r => { let cb = document.getElementById('cb_edit_' + r.trim()); if(cb) cb.checked = true; }); } document.getElementById('acessoModal').style.display = 'flex'; } function fecharModalAcesso() { document.getElementById('acessoModal').style.display = 'none'; }</script>"
+    return f"<html><head>{CSS}{js_modal_acesso}</head><body>{modal_acesso}<div class='container-center'><div class='card-center' style='max-width:900px;'>{IMG_LOGO_PEQ}<h2>Aprovações e Usuários</h2>{add_form}<div style='max-height:400px; overflow-y:auto; border:1px solid {COR_BORDA};'><table><tr><th>Usuário</th><th>Cargos</th><th>Status</th><th>Ações</th></tr>{linhas}</table></div><br><a href='/diretoria' class='btn-acao btn-dark' style='width:250px; margin:auto;'>⬅️ Voltar à Diretoria</a></div></div></body></html>"
 
 @app.post("/toggle_usuario")
 async def toggle_usuario(request: Request):
-    if request.session.get("role") not in ["admin", "diretoria"]: return RedirectResponse("/central")
+    if not check_access(request.session.get("role"), ["admin", "diretoria"]): return RedirectResponse(url="/central")
     f = await request.form()
     try:
         with engine.begin() as conn:
@@ -484,31 +597,54 @@ async def toggle_usuario(request: Request):
                 novo_status = 'ATIVO' if target.status == 'BLOQUEADO' else 'BLOQUEADO'
                 conn.execute(text("UPDATE usuarios SET status = :s WHERE id = :id"), {"s": novo_status, "id": f.get("id")})
     except: pass
-    return RedirectResponse("/usuarios", status_code=303)
+    return RedirectResponse(url="/usuarios", status_code=303)
 
 @app.post("/novo_usuario_direto")
 async def novo_usuario_direto(request: Request):
-    if request.session.get("role") not in ["admin", "diretoria"]: return RedirectResponse("/central")
+    if not check_access(request.session.get("role"), ["admin", "diretoria"]): return RedirectResponse(url="/central")
     f = await request.form()
+    roles_list = f.getlist("roles")
+    roles_str = ",".join(roles_list) if roles_list else "membro"
     try:
-        with engine.begin() as conn: conn.execute(text("INSERT INTO usuarios (username, email, password, role, status) VALUES (:u, :e, :p, :r, 'ATIVO') ON CONFLICT (username) DO NOTHING"), {"u": f.get("u").lower(), "e": f.get("e").lower(), "p": f.get("p"), "r": f.get("r")})
+        with engine.begin() as conn: 
+            conn.execute(text("INSERT INTO usuarios (username, email, password, role, status) VALUES (:u, :e, :p, :r, 'ATIVO') ON CONFLICT (username) DO NOTHING"), {"u": f.get("u").lower(), "e": f.get("e").lower(), "p": f.get("p"), "r": roles_str})
     except: pass
-    return RedirectResponse("/usuarios", status_code=303)
+    return RedirectResponse(url="/usuarios", status_code=303)
 
 @app.post("/alterar_acesso")
 async def alterar_acesso(request: Request):
-    if request.session.get("role") not in ["admin", "diretoria"]: return RedirectResponse("/central")
+    if not check_access(request.session.get("role"), ["admin", "diretoria"]): return RedirectResponse(url="/central")
     f = await request.form()
+    roles_list = f.getlist("roles")
+    roles_str = ",".join(roles_list) if roles_list else "membro"
     try:
-        with engine.begin() as conn: conn.execute(text("UPDATE usuarios SET role = :r WHERE id = :id"), {"r": f.get("role"), "id": f.get("id")})
+        with engine.begin() as conn: 
+            conn.execute(text("UPDATE usuarios SET role = :r WHERE id = :id"), {"r": roles_str, "id": f.get("id")})
     except: pass
-    return RedirectResponse("/usuarios", status_code=303)
+    return RedirectResponse(url="/usuarios", status_code=303)
 
 @app.post("/excluir_usuario")
 async def excluir_usuario(request: Request):
-    if request.session.get("role") not in ["admin", "diretoria"]: return RedirectResponse("/central")
+    if not check_access(request.session.get("role"), ["admin", "diretoria"]): return RedirectResponse(url="/central")
     f = await request.form()
     try:
         with engine.begin() as conn: conn.execute(text("DELETE FROM usuarios WHERE id = :id AND username != 'admin'"), {"id": f.get("id")})
     except: pass
-    return RedirectResponse("/usuarios", status_code=303)
+    return RedirectResponse(url="/usuarios", status_code=303)
+
+@app.get("/api/pendentes")
+async def api_pendentes():
+    with engine.connect() as conn:
+        r = conn.execute(text("SELECT id, conteudo FROM fila_impressao WHERE status = 'PENDENTE' LIMIT 1")).fetchone()
+        return {"jobs": [{"id": r.id, "conteudo": r.conteudo}]} if r else {"jobs": []}
+
+@app.post("/api/impresso/{j_id}")
+async def api_impresso(j_id: int):
+    with engine.begin() as conn: conn.execute(text("UPDATE fila_impressao SET status='IMPRESSO' WHERE id=:i"), {"i": j_id})
+    return {"ok": True}
+
+@app.get("/baixar_conector")
+async def baixar_conector():
+    base_url = "http://localhost:8000" 
+    script_content = f"import time\nimport requests\nimport win32print\n\nAPI_URL = '{base_url}'\n\ndef imprimir_ticket(texto):\n    impressora_padrao = win32print.GetDefaultPrinter()\n    try:\n        hPrinter = win32print.OpenPrinter(impressora_padrao)\n        hJob = win32print.StartDocPrinter(hPrinter, 1, ('Ticket Steel Goose', None, 'RAW'))\n        win32print.StartPagePrinter(hPrinter)\n        win32print.WritePrinter(hPrinter, texto.encode('utf-8'))\n        win32print.WritePrinter(hPrinter, b'\\n\\n\\n\\n\\x1B\\x6D')\n        win32print.EndPagePrinter(hPrinter)\n        win32print.EndDocPrinter(hPrinter)\n        win32print.ClosePrinter(hPrinter)\n    except Exception: pass\n\nwhile True:\n    try:\n        resposta = requests.get(f'{{API_URL}}/api/pendentes', timeout=5)\n        if resposta.status_code == 200:\n            dados = resposta.json()\n            for job in dados.get('jobs', []):\n                imprimir_ticket(job['conteudo'])\n                requests.post(f'{{API_URL}}/api/impresso/{{job[\"id\"]}}', timeout=5)\n    except: pass\n    time.sleep(2)"
+    return Response(content=script_content, media_type="text/x-python", headers={"Content-Disposition": "attachment; filename=conector_impressao.py"})
